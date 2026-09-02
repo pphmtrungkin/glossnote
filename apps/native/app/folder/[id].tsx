@@ -98,9 +98,13 @@ export default function FolderScreen() {
             <Card key={word.id} variant="secondary" className="p-4">
               <View className="flex-row items-start justify-between gap-3">
                 <View className="flex-1">
-                  <Card.Title className={word.mastered ? "line-through" : undefined}>{word.term}</Card.Title>
+                  <Card.Title
+                    className={`font-serif-semibold text-lg ${word.mastered ? "line-through" : ""}`}
+                  >
+                    {word.term}
+                  </Card.Title>
                   {definition ? (
-                    <Card.Description>{definition}</Card.Description>
+                    <Card.Description className="font-serif leading-6">{definition}</Card.Description>
                   ) : (
                     // Not an error: word.create leaves dictionaryEntryId null
                     // when no definition was known at capture time.
@@ -109,7 +113,7 @@ export default function FolderScreen() {
                     </Chip>
                   )}
                   {word.exampleSentence ? (
-                    <Text className="text-muted text-xs italic mt-2">{word.exampleSentence}</Text>
+                    <Text className="text-muted text-xs italic mt-2 font-serif">{word.exampleSentence}</Text>
                   ) : null}
                 </View>
               </View>

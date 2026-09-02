@@ -1,3 +1,252 @@
 @import "tailwindcss";
 @import "uniwind";
 @import "heroui-native/styles";
+
+/*
+ * Kindle-style reading themes.
+ *
+ * HeroUI Native drives every component off the custom properties declared in
+ * heroui-native/styles/variables.css, so overriding them here re-skins the
+ * whole library (and `useThemeColor()`) without touching component code.
+ *
+ * `light` and `dark` are Uniwind built-ins, redefined below as Kindle's
+ * "White" and "Black" pages; `sepia` and `green` are registered via
+ * `extraThemes` in metro.config.js.
+ *
+ * Every theme must declare the same set of variables — a token missing from
+ * one theme resolves to nothing and the component renders uncolored.
+ */
+@layer theme {
+  :root {
+    /* Kindle "White" — paper, not the stock grey. */
+    @variant light {
+      --background: #ffffff;
+      --foreground: #1b1b1b;
+
+      --surface: #ffffff;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #f4f2ed;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #eae7e0;
+      --surface-tertiary-foreground: var(--foreground);
+
+      --overlay: #ffffff;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(0, 0, 0, 0.2);
+
+      --muted: #6b6660;
+
+      --default: #efede8;
+      --default-foreground: var(--foreground);
+
+      --accent: #3a6ea5;
+      --accent-foreground: #ffffff;
+
+      --field-background: #ffffff;
+      --field-foreground: var(--foreground);
+      --field-placeholder: #9a948c;
+      --field-border: transparent;
+
+      --success: #2f7d51;
+      --success-foreground: #ffffff;
+      --warning: #b3761a;
+      --warning-foreground: #ffffff;
+      --danger: #b3261e;
+      --danger-foreground: #ffffff;
+
+      --segment: #ffffff;
+      --segment-foreground: var(--foreground);
+
+      --border: #e3dfd7;
+      --separator: #cfc9be;
+      --focus: var(--accent);
+      --link: var(--foreground);
+
+      --surface-shadow:
+        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
+        0 0 1px 0 rgba(0, 0, 0, 0.06);
+      --overlay-shadow:
+        0 2px 8px 0 rgba(0, 0, 0, 0.02), 0 -6px 12px 0 rgba(0, 0, 0, 0.01),
+        0 14px 28px 0 rgba(0, 0, 0, 0.03);
+      --field-shadow:
+        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
+        0 0 1px 0 rgba(0, 0, 0, 0.06);
+    }
+
+    /* Kindle "Sepia" — warm paper, brown ink. */
+    @variant sepia {
+      --background: #fbf0d9;
+      --foreground: #4a3b28;
+
+      --surface: #fcf5e4;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #f4e8cd;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #eddfbe;
+      --surface-tertiary-foreground: var(--foreground);
+
+      --overlay: #fcf5e4;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(59, 45, 26, 0.25);
+
+      --muted: #8a7855;
+
+      --default: #f0e4c8;
+      --default-foreground: var(--foreground);
+
+      --accent: #9a6b3f;
+      --accent-foreground: #fff8ea;
+
+      --field-background: #fcf5e4;
+      --field-foreground: var(--foreground);
+      --field-placeholder: #a2916e;
+      --field-border: transparent;
+
+      --success: #4f7a3a;
+      --success-foreground: #fff8ea;
+      --warning: #a9741b;
+      --warning-foreground: #fff8ea;
+      --danger: #a33c2a;
+      --danger-foreground: #fff8ea;
+
+      --segment: #fcf5e4;
+      --segment-foreground: var(--foreground);
+
+      --border: #e5d6b4;
+      --separator: #cdb98d;
+      --focus: var(--accent);
+      --link: var(--foreground);
+
+      --surface-shadow:
+        0 2px 4px 0 rgba(74, 59, 40, 0.05), 0 1px 2px 0 rgba(74, 59, 40, 0.07),
+        0 0 1px 0 rgba(74, 59, 40, 0.07);
+      --overlay-shadow:
+        0 2px 8px 0 rgba(74, 59, 40, 0.03), 0 -6px 12px 0 rgba(74, 59, 40, 0.02),
+        0 14px 28px 0 rgba(74, 59, 40, 0.04);
+      --field-shadow:
+        0 2px 4px 0 rgba(74, 59, 40, 0.05), 0 1px 2px 0 rgba(74, 59, 40, 0.07),
+        0 0 1px 0 rgba(74, 59, 40, 0.07);
+    }
+
+    /* Kindle "Green" — the pale mint page on newer Paperwhites. */
+    @variant green {
+      --background: #dce7d5;
+      --foreground: #263323;
+
+      --surface: #e3eddc;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #d3e0cb;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #c6d6bd;
+      --surface-tertiary-foreground: var(--foreground);
+
+      --overlay: #e3eddc;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(30, 44, 26, 0.25);
+
+      --muted: #5f7057;
+
+      --default: #d0dec8;
+      --default-foreground: var(--foreground);
+
+      --accent: #3f6b3a;
+      --accent-foreground: #f2f7ef;
+
+      --field-background: #e3eddc;
+      --field-foreground: var(--foreground);
+      --field-placeholder: #79886f;
+      --field-border: transparent;
+
+      --success: #35703c;
+      --success-foreground: #f2f7ef;
+      --warning: #8e6e1c;
+      --warning-foreground: #f2f7ef;
+      --danger: #97392c;
+      --danger-foreground: #f2f7ef;
+
+      --segment: #e3eddc;
+      --segment-foreground: var(--foreground);
+
+      --border: #c4d4bb;
+      --separator: #a6bc9c;
+      --focus: var(--accent);
+      --link: var(--foreground);
+
+      --surface-shadow:
+        0 2px 4px 0 rgba(38, 51, 35, 0.05), 0 1px 2px 0 rgba(38, 51, 35, 0.07),
+        0 0 1px 0 rgba(38, 51, 35, 0.07);
+      --overlay-shadow:
+        0 2px 8px 0 rgba(38, 51, 35, 0.03), 0 -6px 12px 0 rgba(38, 51, 35, 0.02),
+        0 14px 28px 0 rgba(38, 51, 35, 0.04);
+      --field-shadow:
+        0 2px 4px 0 rgba(38, 51, 35, 0.05), 0 1px 2px 0 rgba(38, 51, 35, 0.07),
+        0 0 1px 0 rgba(38, 51, 35, 0.07);
+    }
+
+    /* Kindle "Black" — true black page, grey ink rather than white to cut
+       glare in the dark. */
+    @variant dark {
+      --background: #000000;
+      --foreground: #cccccc;
+
+      --surface: #121212;
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #1a1a1a;
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #232323;
+      --surface-tertiary-foreground: var(--foreground);
+
+      --overlay: #161616;
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(0, 0, 0, 0.5);
+
+      --muted: #8a8a8a;
+
+      --default: #1e1e1e;
+      --default-foreground: var(--foreground);
+
+      --accent: #7fa9d6;
+      --accent-foreground: #06121f;
+
+      --field-background: #121212;
+      --field-foreground: var(--foreground);
+      --field-placeholder: #7a7a7a;
+      --field-border: transparent;
+
+      --success: #5fa97a;
+      --success-foreground: #06180e;
+      --warning: #d0a24e;
+      --warning-foreground: #1a1206;
+      --danger: #d9705f;
+      --danger-foreground: #1d0906;
+
+      --segment: #2a2a2a;
+      --segment-foreground: var(--foreground);
+
+      --border: #2a2a2a;
+      --separator: #3d3d3d;
+      --focus: var(--accent);
+      --link: var(--foreground);
+
+      --surface-shadow: 0 0 0 0 transparent inset;
+      --overlay-shadow: 0 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+      --field-shadow: 0 0 0 0 transparent inset;
+    }
+  }
+}
+
+/*
+ * Literata is the reading serif — Bookerly is proprietary to Amazon and can't
+ * be redistributed, so this is the closest openly-licensed analogue (SIL OFL,
+ * drawn for Google Play Books).
+ *
+ * React Native doesn't synthesise weights for custom families: each weight
+ * registers under its own family name, so bold text needs `font-serif-bold`
+ * rather than `font-serif font-bold`.
+ */
+@theme {
+  --font-serif: "Literata_400Regular";
+  --font-serif-medium: "Literata_500Medium";
+  --font-serif-semibold: "Literata_600SemiBold";
+  --font-serif-bold: "Literata_700Bold";
+}

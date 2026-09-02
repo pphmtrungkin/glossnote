@@ -76,9 +76,9 @@ export default function SearchScreen() {
                 <Card variant="secondary" className="p-4">
                   <View className="flex-row items-start justify-between gap-3">
                     <View className="flex-1">
-                      <Card.Title>{word.term}</Card.Title>
+                      <Card.Title className="font-serif-semibold text-base">{word.term}</Card.Title>
                       {definition ? (
-                        <Card.Description>{definition}</Card.Description>
+                        <Card.Description className="font-serif leading-6">{definition}</Card.Description>
                       ) : (
                         <Chip size="sm" variant="soft" color="warning" className="mt-1 self-start">
                           <Chip.Label>Pending definition</Chip.Label>

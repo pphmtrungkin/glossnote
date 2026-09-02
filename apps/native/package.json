@@ -16,6 +16,7 @@
     "@better-auth/expo": "catalog:",
     "@better-vocab/api": "workspace:*",
     "@better-vocab/env": "workspace:*",
+    "@expo-google-fonts/literata": "^0.4.3",
     "@expo/metro-runtime": "~57.0.15",
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.14",

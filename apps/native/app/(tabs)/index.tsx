@@ -79,7 +79,7 @@ export default function ShelfScreen() {
   return (
     <Container className="px-6 pb-8">
       <View className="flex-row items-center justify-between py-4">
-        <Text className="text-2xl font-bold text-foreground">Your shelf</Text>
+        <Text className="text-2xl font-serif-bold text-foreground">Your shelf</Text>
         <Button size="sm" variant={isFormOpen ? "tertiary" : "primary"} onPress={() => setIsFormOpen((open) => !open)}>
           <Button.Label>{isFormOpen ? "Cancel" : "New folder"}</Button.Label>
         </Button>
@@ -177,7 +177,7 @@ export default function ShelfScreen() {
               <Card variant="secondary" className="p-4">
                 <View className="flex-row items-start justify-between gap-3">
                   <View className="flex-1">
-                    <Card.Title>{folder.title}</Card.Title>
+                    <Card.Title className="font-serif-medium text-base">{folder.title}</Card.Title>
                     {/* No author line yet: folders are title-only until a book
                         search populates `folder.bookId`. */}
                   </View>

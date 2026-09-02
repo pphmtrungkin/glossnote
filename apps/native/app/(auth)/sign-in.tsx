@@ -8,7 +8,7 @@ export default function SignInScreen() {
   return (
     <Container className="p-6">
       <View className="py-4 mb-2">
-        <Text className="text-4xl font-bold text-foreground mb-1">Lexishelf</Text>
+        <Text className="text-4xl font-serif-bold text-foreground mb-1">Lexishelf</Text>
         <Text className="text-muted">Every word you look up, kept on a shelf.</Text>
       </View>
 

@@ -3,16 +3,16 @@ import { Tabs } from "expo-router";
 import { useThemeColor } from "heroui-native";
 import { useCallback } from "react";
 
+import { ReadingThemePicker } from "@/components/reading-theme-picker";
 import { SignOutButton } from "@/components/sign-out-button";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 export default function TabLayout() {
   const themeColorForeground = useThemeColor("foreground");
   const themeColorBackground = useThemeColor("background");
 
-  // The drawer that used to host the theme toggle is gone, so it lives in the
-  // tab header instead.
-  const renderThemeToggle = useCallback(() => <ThemeToggle />, []);
+  // The drawer that used to host the theme control is gone, so the Kindle-style
+  // "Aa" page-colour picker lives in the tab header instead.
+  const renderThemePicker = useCallback(() => <ReadingThemePicker />, []);
   const renderSignOut = useCallback(() => <SignOutButton />, []);
 
   return (
@@ -20,8 +20,8 @@ export default function TabLayout() {
       screenOptions={{
         headerStyle: { backgroundColor: themeColorBackground },
         headerTintColor: themeColorForeground,
-        headerTitleStyle: { color: themeColorForeground, fontWeight: "600" },
-        headerRight: renderThemeToggle,
+        headerTitleStyle: { color: themeColorForeground, fontFamily: "Literata_600SemiBold" },
+        headerRight: renderThemePicker,
         headerLeft: renderSignOut,
         tabBarStyle: { backgroundColor: themeColorBackground },
       }}

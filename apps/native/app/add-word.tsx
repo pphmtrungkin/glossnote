@@ -109,14 +109,14 @@ export default function AddWordScreen() {
         {suggestion ? (
           <Surface variant="secondary" className="p-4 rounded-lg">
             <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-foreground font-medium">{suggestion.term}</Text>
+              <Text className="text-foreground font-serif-semibold text-base">{suggestion.term}</Text>
               {suggestion.partOfSpeech ? (
                 <Chip size="sm" variant="soft" color="default">
                   <Chip.Label>{suggestion.partOfSpeech}</Chip.Label>
                 </Chip>
               ) : null}
             </View>
-            <Text className="text-muted text-sm">{suggestion.definition}</Text>
+            <Text className="text-muted text-sm font-serif leading-6">{suggestion.definition}</Text>
             <Text className="text-muted text-xs mt-2">
               Found in your offline dictionary — edit it below if it&apos;s the wrong sense.
             </Text>

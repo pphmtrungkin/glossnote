@@ -2,7 +2,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 export const LOCAL_DB_NAME = "lexishelf.db";
 
-const LOCAL_DB_VERSION = 1;
+const LOCAL_DB_VERSION = 2;
 
 // Runs on every app start via SQLiteProvider's onInit. `dictionary_core` is
 // declared IF NOT EXISTS only as a safety net for when no bundled asset has
@@ -65,6 +65,20 @@ export async function migrateLocalDb(db: SQLiteDatabase) {
       );
     `);
     version = 1;
+  }
+
+  if (version === 1) {
+    await db.execAsync(`
+      -- Device-local UI preferences (reading theme, and later font size /
+      -- line spacing). Deliberately not in the server-side userPreference
+      -- table: the chosen page colour should apply from the first frame,
+      -- before any session or network round-trip exists.
+      CREATE TABLE IF NOT EXISTS app_setting (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+    version = 2;
   }
 
   await db.execAsync(`PRAGMA user_version = ${version}`);
