@@ -4,14 +4,14 @@ import {
   Literata_500Medium,
   Literata_600SemiBold,
   Literata_700Bold,
-  useFonts,
 } from "@expo-google-fonts/literata";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { SQLiteProvider } from "expo-sqlite";
 import { HeroUINativeProvider, Spinner, useThemeColor } from "heroui-native";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -65,6 +65,9 @@ function StackLayout() {
   );
 }
 
+/** How long to wait on the reading font before rendering anyway. */
+const FONT_TIMEOUT_MS = 3000;
+
 /**
  * Sits inside AppThemeProvider so it can wait on the persisted theme as well
  * as the font — hiding the splash any earlier would show one frame of the
@@ -72,14 +75,24 @@ function StackLayout() {
  */
 function SplashGate({ areFontsLoaded }: { areFontsLoaded: boolean }) {
   const { isThemeReady } = useAppTheme();
+  const [hasWaitedForFonts, setHasWaitedForFonts] = useState(false);
+
+  // A font that never resolves must not leave a blank app behind the splash
+  // screen: after the timeout the UI renders with the system serif instead.
+  useEffect(() => {
+    const timeout = setTimeout(() => setHasWaitedForFonts(true), FONT_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  const isReady = (areFontsLoaded || hasWaitedForFonts) && isThemeReady;
 
   useEffect(() => {
-    if (areFontsLoaded && isThemeReady) {
+    if (isReady) {
       SplashScreen.hideAsync();
     }
-  }, [areFontsLoaded, isThemeReady]);
+  }, [isReady]);
 
-  if (!areFontsLoaded || !isThemeReady) return null;
+  if (!isReady) return null;
 
   return <StackLayout />;
 }
