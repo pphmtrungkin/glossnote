@@ -1,0 +1,83 @@
+---
+title: API layer
+description: How tRPC is structured, and what the folder/word routers do
+---
+
+## Why tRPC, and why it's split from the Hono app
+
+The API is [tRPC](https://trpc.io), not REST. The pitch for tRPC is end-to-end type safety without writing a schema twice: you define a function on the server, and the client calls it with full autocomplete and type-checking, because the client literally imports the server's router *type* (not its code) and TypeScript does the rest. There's no OpenAPI spec to keep in sync, no manually-written client SDK — if you rename a field on the server, every call site on the client shows a type error immediately.
+
+The router logic lives in `packages/api`, completely separate from `apps/server` (the Hono app that actually receives HTTP requests). This split matters more than it looks:
+
+- `packages/api/src/index.ts` sets up tRPC itself: `initTRPC.context<Context>().create()`, then exports three things every router file uses — `router` (groups procedures together), `publicProcedure` (no auth required), and `protectedProcedure` (auth required — see the [Authentication](/docs/authentication) page for exactly how that check works).
+- `packages/api/src/context.ts` builds the per-request context — right now, just `{ session }`, resolved once via Better Auth before any procedure runs.
+- `packages/api/src/routers/index.ts` is the `appRouter` — the single object that merges every feature's routers together.
+- `apps/server/src/index.ts` is the *only* file that knows tRPC is being served over Hono at all. It mounts `appRouter` at `/trpc/*` via `@hono/trpc-server` and does nothing else API-related.
+
+The payoff: if this project ever needed to serve the same API over, say, a plain Node HTTP server or a different framework, only `apps/server` would change. `packages/api` — where all the actual logic lives — wouldn't need to know or care.
+
+## Adding a new feature = adding a router file
+
+Every feature router follows the same shape: a file in `packages/api/src/routers/`, exporting a `router({...})` of procedures, merged into `appRouter`. There is no separate REST-endpoint step — a new procedure *is* the endpoint.
+
+```ts
+// packages/api/src/routers/index.ts
+export const appRouter = router({
+  healthCheck: publicProcedure.query(() => "OK"),
+  privateData: protectedProcedure.query(({ ctx }) => ({ user: ctx.session.user })),
+  folder: folderRouter,
+  word: wordRouter,
+});
+```
+
+## The `folder` router
+
+`packages/api/src/routers/folder.ts` — everything a user does to their own reading folders.
+
+| Procedure | What it does |
+| --- | --- |
+| `list` | All folders belonging to the caller, each with its linked `book` row attached (`with: { book: true }`) |
+| `create` | Insert a folder — `bookId` optional, `status` defaults to `"reading"` |
+| `updateStatus` | Change `reading` / `finished` / `misc` |
+| `delete` | Remove a folder |
+
+Notice there's no separate "check this folder belongs to the caller" step before `updateStatus` or `delete` — ownership is baked directly into the `WHERE` clause instead:
+
+```ts
+.where(and(eq(folder.id, input.id), eq(folder.userId, ctx.session.user.id)))
+```
+
+If the folder exists but belongs to someone else, this simply matches zero rows — the mutation silently affects nothing, and the code throws `NOT_FOUND` because nothing came back. One line does both the security check and the update.
+
+## The `word` router
+
+`packages/api/src/routers/word.ts` — the core capture flow. Worth reading in full if you're new to the codebase, because it's the one place several design decisions from the [data model](/docs/data-model) all show up in actual code at once.
+
+| Procedure | What it does |
+| --- | --- |
+| `listByFolder` | Words in one folder, with the resolved `dictionaryEntry` attached |
+| `search` | Search the caller's words across *every* folder — the server-side counterpart to the on-device SQLite search used when offline |
+| `create` | Log a word — covers both the offline-sync-flush case and the immediate online-save case |
+| `update` | Edit a personal definition override, or toggle `mastered` |
+| `delete` | Remove a word |
+
+Walking through `create`, because it's doing more than it looks like at first glance:
+
+1. **Confirm the folder belongs to the caller**, and — while already fetching that row anyway — grab its `bookId`. This is then copied onto the new `word` row (`word.bookId` is a deliberate denormalization; see [data model](/docs/data-model) for why).
+2. **If a definition was provided** (the online path), resolve-or-create a row in the shared `dictionaryEntry` cache, keyed by the normalized term. `.onConflictDoNothing({ target: dictionaryEntry.term })` handles the case where two requests try to create the same brand-new term at the same moment — instead of one of them crashing with a unique-constraint error, the loser just re-reads the winner's row.
+3. **Look up the caller's preferences** to snapshot their current aggregate-opt-in setting onto this specific word (again: a snapshot, not a live reference — see the data model page for why that distinction matters).
+4. **Insert the word**, with the same `onConflictDoNothing` pattern on `(folderId, normalizedTerm)` — if this exact word already exists in this folder, nothing new is inserted, and the existing row is returned instead. This is what makes "tap a crowdsourced word to add it to your folder" safe to tap twice.
+
+## The native client
+
+`apps/native/utils/trpc.ts` is where the mobile app turns `AppRouter`'s *type* into something callable. Two pieces work together:
+
+```ts
+const trpcClient = createTRPCClient<AppRouter>({
+  links: [httpBatchLink({ url: `${env.EXPO_PUBLIC_SERVER_URL}/trpc`, ... })],
+});
+
+export const trpc = createTRPCOptionsProxy<AppRouter>({ client: trpcClient, queryClient });
+```
+
+`createTRPCOptionsProxy` is what lets a screen call `trpc.word.listByFolder.queryOptions({ folderId })` and hand that straight to a React Query hook (`useQuery`, `useMutation`) — you get tRPC's type safety and React Query's caching/loading-state handling at the same time, instead of picking one.

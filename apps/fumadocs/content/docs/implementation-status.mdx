@@ -1,0 +1,22 @@
+---
+title: Implementation status
+description: What's built vs. still a gap, tracked against the Lexishelf user-flow spec
+---
+
+Tracked against the Lexishelf user-flow doc, section by section. "Schema only" means the Postgres or on-device tables exist, but no procedure or UI actually uses them yet — a foundation, not a feature.
+
+| Flow section | Status |
+| --- | --- |
+| Onboarding | Partial — email/password auth works ([Authentication](/docs/authentication)); magic link and OAuth aren't configured. The dictionary bundling pipeline exists but hasn't been run for real, so first-launch download isn't wired up. No onboarding UI. |
+| Creating a folder | `folder.create` / `list` / `updateStatus` / `delete` implemented ([API layer](/docs/api-layer)). No Hardcover client yet, so `book` rows can't be populated from a real search ([Book search](/docs/book-search)). No UI. |
+| Logging a word — offline | The `dictionary_core` → `dictionary_extended` → `cached_lookup` lookup path exists ([Offline dictionary](/docs/offline-dictionary)). `pending_sync` table exists, but nothing writes to it or flushes it yet. No capture UI. |
+| Logging a word — online | `word.create` implemented — accepts an already-known definition, or leaves the word "pending" ([Data model](/docs/data-model)). No dictionary-API/AI-definition resolver, no text-to-speech, and voice entry needs an on-device speech-to-text library that hasn't been chosen. |
+| Browsing inventory | `word.listByFolder` and `word.search` implemented. No UI. |
+| Crowdsourced discovery | Not implemented — the live, per-book frequency aggregate ([worked example](/docs/data-model#worked-example-logging-a-word)) hasn't been written as a procedure yet. Deliberately not cached, so an offline view never risks showing stale (and potentially spoiler-revealing) results. |
+| Review / retention | `word.update` supports toggling `mastered`. No review-session UI, no weekly digest job, no push-sending code (`pushToken` table exists, unused). |
+| Settings / account | `userPreference` schema exists and is read by `word.create`. No settings screen, no account-deletion config, no export, no "Sync now" button. |
+| Mode indicators | Not implemented — `expo-network` is installed but nothing uses it yet. |
+
+## What this means in practice
+
+The data model — both Postgres and the on-device SQLite schema — was designed section-by-section against the full flow doc, so almost everything above has a home to land in already. What's missing is nearly all business logic and UI: a Hardcover client, the sync-flush job, the crowdsourced aggregate query, and every screen. Two items additionally need a library decision before they can be built at all: on-device speech-to-text (voice capture) and a push-notification sending mechanism (weekly digest).

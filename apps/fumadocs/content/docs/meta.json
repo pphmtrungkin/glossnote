@@ -1,0 +1,12 @@
+{
+  "title": "Docs",
+  "pages": [
+    "index",
+    "data-model",
+    "api-layer",
+    "authentication",
+    "book-search",
+    "offline-dictionary",
+    "implementation-status"
+  ]
+}

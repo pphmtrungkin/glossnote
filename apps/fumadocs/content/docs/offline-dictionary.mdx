@@ -1,0 +1,52 @@
+---
+title: Offline dictionary
+description: The on-device SQLite dictionary and the WordNet build pipeline
+---
+
+## Why an on-device database at all
+
+The core design principle for this app is: **offline mode should never feel broken.** If someone is reading on a plane and looks up a word, they shouldn't see a spinner that never resolves — they should get a real definition instantly, then a richer one later once they're back online. That requirement rules out "just call an API and show a loading state" as the primary path; the primary path has to be a database that already lives on the phone.
+
+That's `expo-sqlite` — a real SQLite database bundled with (or downloaded by) the app, queried entirely on-device, no network required. It's a *separate* concept from the Postgres `dictionaryEntry` cache described in [Data model](/docs/data-model): the server-side cache is a shared, cross-user, online resource; the on-device database is a private, offline-first resource that exists purely so the app has something to answer with when there's no connection at all.
+
+## The four local tables
+
+Defined in `apps/native/lib/local-db.ts`, created via a migration that runs through `SQLiteProvider`'s `onInit` callback (wired up in `apps/native/app/_layout.tsx`) every time the app starts:
+
+| Table | Purpose |
+| --- | --- |
+| `dictionary_core` | One row per term — the bundled reference dictionary, pre-populated at build time (see below) |
+| `dictionary_extended` | A downloadable pack, opt-in from Settings. Unlike `dictionary_core`, a term can have *multiple* rows (multiple senses), ordered by a `rank` column |
+| `cached_lookup` | Definitions resolved online (dictionary API / AI-enhanced) — cached locally so the same word works offline on every later lookup |
+| `pending_sync` | Words captured offline, waiting to flush to the server once reconnected |
+
+That last table is worth pausing on: `pending_sync` only exists on the device, never on the server. There's no equivalent "sync queue" table in Postgres, and that's intentional — the server never needs to know that a queue exists at all, it only ever sees the final `word.create` calls once they actually arrive. Keeping sync state purely client-side avoids having to reconcile two separate ideas of "what's pending" across two databases.
+
+## Lookup order
+
+`apps/native/hooks/use-dictionary-lookup.ts` is what a screen calls when the user types or speaks a word. It checks, in order: `dictionary_core` → `dictionary_extended` → `cached_lookup`, returning the first match. `dictionary_extended` can have multiple ranked senses for a term, but only the top-ranked one (`ORDER BY rank ASC LIMIT 1`) is surfaced today — matching the "definition displayed instantly, user confirms" flow. The other senses stay in the table, queryable later if a "see other meanings" screen ever gets built.
+
+## Where the bundled data comes from
+
+The reference dictionary is built from [Open English WordNet](https://github.com/globalwordnet/english-wordnet) (CC-BY 4.0), a free lexical database with roughly 136,000 lemmas. That's too large to ship wholesale as a "small" first-launch download, and WordNet's own data doesn't carry a "how common is this word in everyday English" signal — so the app draws a line using data WordNet *does* provide: sense frequency ranking.
+
+**`dictionary_core`** = single-word lemmas only, keeping just the #1 (most frequent) sense of each. Small enough to bundle directly in the app binary — available instantly, even before the app has ever touched the network.
+
+**`dictionary_extended`** = everything else: every lemma including multi-word phrases, every sense, ranked. Downloaded separately, only if a user opts into the larger pack from Settings.
+
+### The build-time pipeline
+
+Two scripts, run on a developer's machine (or CI), not on-device:
+
+1. **`apps/native/scripts/wordnet-to-dictionary.ts`** downloads WordNet's raw source data directly from GitHub — around 45 "synset" YAML files (each holding definitions and example sentences for a category like `noun.person` or `verb.motion`) plus `sense-orders.csv`, which lists, for every word, its senses ranked by frequency. The script cross-references the two — for each word, walk its ranked list of senses, and pull each one's definition out of the matching YAML file — and writes two plain JSON files: `dictionary-core.json` and `dictionary-extended.json`.
+2. **`apps/native/scripts/build-dictionary-db.ts`** is intentionally *not* WordNet-specific — it just takes one of those JSON files plus a `core`/`extended` mode flag and produces a real SQLite `.db` file using Bun's built-in `bun:sqlite` (no extra dependency needed). The `core` build also bakes in an FTS5 full-text-search index, which is what will eventually power "did you mean…" suggestions when a voice transcription doesn't exactly match a word in the dictionary.
+
+The resulting `dictionary-core.db` gets wired into `SQLiteProvider`'s `assetSource` prop, which tells Expo to copy that pre-built file onto the device the very first time the app launches — the "small core set, available offline from the first launch" requirement, satisfied by shipping a finished database rather than trying to build one at runtime. `dictionary-extended.db` would be hosted separately and downloaded on demand.
+
+<Callout type="warn">
+This pipeline exists as working code, but hasn't been run for real yet — no `.db` files exist in the repo, and `assetSource` isn't wired up in `_layout.tsx` until one does. See [Implementation status](/docs/implementation-status).
+</Callout>
+
+## Still undecided
+
+Voice entry needs an on-device speech-to-text library, and reading a word aloud needs a text-to-speech one (`expo-speech` is a natural fit, not yet installed) — neither has been chosen yet.

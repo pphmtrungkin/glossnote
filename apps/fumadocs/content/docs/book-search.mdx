@@ -1,0 +1,48 @@
+---
+title: Book search
+description: The planned Hardcover GraphQL integration
+---
+
+<Callout type="warn">
+Planned, not yet implemented. There is no Hardcover client in `packages/api` yet — this page documents the intended design so it gets built consistently with everything else, but `folder.create` currently can't be given a real `bookId` from search results.
+</Callout>
+
+## Why this needs to be server-side
+
+Book search will call the [Hardcover](https://docs.hardcover.app) GraphQL API (`https://api.hardcover.app/v1/graphql`), authenticated with a Bearer token tied to our account. That token has a shared 60-requests/minute budget across every user of the app — if it shipped inside the mobile app bundle, it would be extractable from the app binary, and one misbehaving client could exhaust the whole app's quota.
+
+So this has to be a `packages/api` procedure, never a direct call from `apps/native`: the native app calls our own tRPC endpoint, and our server calls Hardcover, holding the token itself. That also gives one place to add caching or throttling later if the rate limit becomes a real constraint.
+
+## Why `book.provider`/`externalId` are plain text
+
+This is the schema decision that makes book search swappable without a migration. See [Data model](/docs/data-model) for the full table shape — the short version: `provider` is just `"hardcover"` today, `externalId` is whatever Hardcover calls that book's ID. If the app ever needed to add a second provider, or migrate away from Hardcover entirely, no `ALTER TABLE` is required — it's just a different string in an existing column.
+
+## The intended shape
+
+A `book` procedure resolving Hardcover's `books` query, then upserting into our own `book` table keyed on `(provider, externalId)`:
+
+```graphql
+query SearchBooks($title: String!) {
+  books(where: { title: { _ilike: $title } }, limit: 10, order_by: { users_count: desc }) {
+    id
+    slug
+    title
+    description
+    cached_tags
+    contributions { author { name } }
+  }
+}
+```
+
+Mapped onto our schema:
+
+| `book` column | Hardcover field |
+| --- | --- |
+| `externalId` | `id` |
+| `title` | `title` |
+| `description` | `description` |
+| `authors` | `contributions[].author.name` |
+| `topics` | `cached_tags` |
+| `raw` | the full response, unmapped |
+
+Two things to confirm against Hardcover's actual schema before implementing, rather than assuming: whether `cached_tags` is a flat tag list or a categorized object (Genre vs. Mood vs. Content Warning — flattening a categorized structure loses that distinction), and what field actually holds a cover image URL.

@@ -1,0 +1,46 @@
+---
+title: Authentication
+description: Better Auth configuration and how a session reaches a tRPC procedure
+---
+
+Auth is handled by [Better Auth](https://better-auth.com), configured in exactly one place — `packages/auth/src/index.ts` — and imported everywhere it's needed rather than reimplemented per app. That's worth calling out because it's a common trap: it would be easy to end up with slightly different session-handling logic in `apps/server` versus `apps/native`. Instead, there is a single `auth` object, and every other piece of the codebase treats it as a black box.
+
+## What's actually configured
+
+```ts
+// packages/auth/src/index.ts (shape, not verbatim)
+betterAuth({
+  database: drizzleAdapter(db, { provider: "pg", schema }),
+  trustedOrigins: [env.CORS_ORIGIN, "better-vocab://", "exp://", "http://localhost:8081"],
+  emailAndPassword: { enabled: true },
+  plugins: [expo()],
+});
+```
+
+- **`drizzleAdapter`** points Better Auth at our own Postgres database and our own `user`/`session`/`account`/`verification` tables (`packages/db/src/schema/auth.ts`) instead of managing its own separate database. Better Auth generates the *shape* of those tables, but they live in our schema, migrate alongside everything else, and are queryable with the same Drizzle client as every other table.
+- **`emailAndPassword: { enabled: true }`** is the only sign-in method currently wired up. The product flow doc mentions magic link and OAuth as options — neither is configured yet. If you go looking for them and don't find them, that's not a bug, it's just not built.
+- **`expo()` plugin** is what makes auth work on a mobile app instead of a browser at all. A normal web session relies on the browser automatically attaching cookies to every request; a React Native app has no such thing. This plugin adds the deep-link handshake and secure-storage-backed session handling that Expo needs.
+- **`trustedOrigins`** includes the app's custom URL scheme (`better-vocab://`) and Expo's dev scheme (`exp://`) — without these, Better Auth would reject the redirect that completes login on a device.
+
+## How a session actually reaches your code
+
+This is the part worth understanding end to end, because it explains why `protectedProcedure` can just assume `ctx.session` exists.
+
+1. A request comes into `apps/server`, hits `/trpc/*`, and gets routed into `packages/api` before any procedure runs.
+2. `packages/api/src/context.ts` builds the per-request context by calling `auth.api.getSession({ headers })` — reading whatever cookie or token came in on the request and asking Better Auth "who is this, if anyone?"
+3. That result (a session or `null`) is placed on `ctx.session` for every procedure to see.
+4. `protectedProcedure` (`packages/api/src/index.ts`) is a `publicProcedure` wrapped in one piece of middleware: if `ctx.session` is missing, throw `UNAUTHORIZED` before the procedure body ever runs. If it's present, `next()` is called with a *narrowed* context where `ctx.session` is no longer nullable — which is why procedure code like `word.create` can write `ctx.session.user.id` directly without an `if (!ctx.session)` check of its own. The check already happened one layer up, and TypeScript knows it.
+
+So the mental model is: authentication is resolved once, centrally, before your procedure code exists at all. You never call `auth.api.getSession()` yourself inside a procedure — you just declare whether the procedure needs a session (`protectedProcedure`) or not (`publicProcedure`), and the context/middleware pipeline handles the rest.
+
+## The client side
+
+`apps/native/lib/auth-client.ts` is the mirror image on the mobile app: `createAuthClient` from `better-auth/react`, configured with the matching `expoClient()` plugin, using `expo-secure-store` to hold the session token on-device.
+
+One detail that trips people up: a mobile `fetch` call doesn't automatically send cookies the way a browser tab does. So the tRPC client (`apps/native/utils/trpc.ts`) explicitly reads the current session cookie via `authClient.getCookie()` and attaches it as a `Cookie` header on every request — on web, it instead just sets `credentials: "include"` and lets the browser handle it. Same backend, two different plumbing strategies, because "web" and "native" don't share a network stack the way you might assume.
+
+## What's not built yet
+
+- Magic link sign-in
+- OAuth (Google/Apple/etc.)
+- Account deletion — Better Auth supports this via configuration, but it isn't turned on
