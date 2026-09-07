@@ -1,0 +1,14 @@
+{
+  "name": "@better-vocab/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "devDependencies": {
+    "@better-vocab/config": "workspace:*",
+    "typescript": "^6.0.3"
+  }
+}

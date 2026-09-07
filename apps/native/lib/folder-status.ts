@@ -1,14 +1,12 @@
+import { FOLDER_STATUSES, type FolderStatus } from "@better-vocab/domain";
 import type { ChipColor } from "heroui-native";
 
 /**
- * Mirrors `folderStatusEnum` in packages/db/src/schema/enums.ts. Duplicated
- * rather than imported because apps/native only depends on @better-vocab/api
- * for types — pulling in the db package would drag Postgres drivers into the
- * bundle.
+ * How a folder status is presented. The values themselves come from
+ * @better-vocab/domain, which is also where packages/db builds the Postgres
+ * enum from — they were previously three independent literal lists.
  */
-export const FOLDER_STATUSES = ["reading", "finished", "misc"] as const;
-
-export type FolderStatus = (typeof FOLDER_STATUSES)[number];
+export { FOLDER_STATUSES, type FolderStatus };
 
 export const FOLDER_STATUS_LABELS: Record<FolderStatus, string> = {
   reading: "Reading",

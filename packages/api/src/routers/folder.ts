@@ -1,13 +1,15 @@
+import { FOLDER_STATUSES } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { folder } from "@better-vocab/db/schema/book";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { protectedProcedure, router } from "../index";
+import { assertOwned, ownedBy } from "../ownership";
 import { bookInputSchema, upsertBook } from "./book";
 
-const folderStatus = z.enum(["reading", "finished", "misc"]);
+const folderStatus = z.enum(FOLDER_STATUSES);
 
 // Drizzle wraps driver errors, so the Postgres constraint name is on `cause`,
 // not on the top-level message — walk the chain.
@@ -52,7 +54,9 @@ export const folderRouter = router({
             bookId,
           })
           .returning();
-        return created;
+        // A successful insert returns exactly one row; the only failure mode
+        // is the unique-index conflict caught below.
+        return created!;
       } catch (error) {
         // folder_userId_bookId_uidx: one folder per book per user. Unreachable
         // before book search existed; a normal mistake now that it does.
@@ -69,14 +73,16 @@ export const folderRouter = router({
       const [updated] = await db
         .update(folder)
         .set({ status: input.status })
-        .where(and(eq(folder.id, input.id), eq(folder.userId, ctx.session.user.id)))
+        .where(ownedBy(folder, input.id, ctx.session.user.id))
         .returning();
-      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Folder not found" });
-      return updated;
+      return assertOwned(updated, "Folder");
     }),
 
   delete: protectedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
-    await db.delete(folder).where(and(eq(folder.id, input.id), eq(folder.userId, ctx.session.user.id)));
-    return { id: input.id };
+    const [deleted] = await db
+      .delete(folder)
+      .where(ownedBy(folder, input.id, ctx.session.user.id))
+      .returning({ id: folder.id });
+    return assertOwned(deleted, "Folder");
   }),
 });

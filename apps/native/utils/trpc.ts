@@ -9,7 +9,10 @@ import { authClient } from "@/lib/auth-client";
 
 export const queryClient = new QueryClient();
 
-const trpcClient = createTRPCClient<AppRouter>({
+// Exported so a resolver can call a procedure imperatively from inside a
+// queryFn (see hooks/use-definition.ts), where the options proxy below —
+// which builds arguments for useQuery — is the wrong shape.
+export const trpcClient = createTRPCClient<AppRouter>({
   links: [
     httpBatchLink({
       url: `${env.EXPO_PUBLIC_SERVER_URL}/trpc`,

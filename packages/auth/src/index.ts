@@ -1,13 +1,14 @@
 import { expo } from "@better-auth/expo";
-import { createDb } from "@better-vocab/db";
+import { db as defaultDb } from "@better-vocab/db";
 import * as schema from "@better-vocab/db/schema/auth";
 import { env } from "@better-vocab/env/server";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
-export function createAuth() {
-  const db = createDb();
-
+// Takes the connection rather than opening one. `createDb()` used to be
+// called a second time here, so every server process held two Postgres pools
+// that shared nothing — one for tRPC, one for Better Auth's adapter.
+export function createAuth(db: typeof defaultDb = defaultDb) {
   return betterAuth({
     database: drizzleAdapter(db, {
       provider: "pg",

@@ -13,6 +13,7 @@
 //
 // Both write the same `dictionary` table that apps/native/lib/local-db.ts
 // creates — the only difference is the `source` value stamped on each row.
+import { normalizeTerm } from "@better-vocab/domain";
 import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 
@@ -49,7 +50,9 @@ const insert = db.prepare(
 
 db.transaction(() => {
   for (const entry of entries) {
-    const normalized = entry.term.trim().toLowerCase();
+    // Same function the app and the server use. If this ever normalized
+    // differently, every lookup against the shipped asset would miss.
+    const normalized = normalizeTerm(entry.term);
     // core is one-sense-per-term, so rank is pinned to 0 and the unique index
     // silently drops any duplicate term the source file still carries.
     const rank = mode === "core" ? 0 : (entry.rank ?? 0);

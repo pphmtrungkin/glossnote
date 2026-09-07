@@ -18,6 +18,7 @@
     "db:seed": "bun --env-file=../../apps/server/.env src/seed.ts"
   },
   "dependencies": {
+    "@better-vocab/domain": "workspace:*",
     "@better-vocab/env": "workspace:*",
     "better-auth": "catalog:",
     "dotenv": "catalog:",

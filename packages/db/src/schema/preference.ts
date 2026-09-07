@@ -1,3 +1,4 @@
+import { PREFERENCE_DEFAULTS } from "@better-vocab/domain";
 import { relations } from "drizzle-orm";
 import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
@@ -10,8 +11,12 @@ export const userPreference = pgTable("user_preference", {
   userId: text("user_id")
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
-  contributeToAggregateByDefault: boolean("contribute_to_aggregate_by_default").notNull().default(true),
-  offlineDictionaryTier: offlineDictionaryTierEnum("offline_dictionary_tier").notNull().default("core"),
+  contributeToAggregateByDefault: boolean("contribute_to_aggregate_by_default")
+    .notNull()
+    .default(PREFERENCE_DEFAULTS.contributeToAggregateByDefault),
+  offlineDictionaryTier: offlineDictionaryTierEnum("offline_dictionary_tier")
+    .notNull()
+    .default(PREFERENCE_DEFAULTS.offlineDictionaryTier),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

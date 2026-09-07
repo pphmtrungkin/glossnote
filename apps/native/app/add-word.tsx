@@ -19,13 +19,12 @@ import z from "zod";
 
 import { Container } from "@/components/container";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useDictionaryLookup } from "@/hooks/use-dictionary-lookup";
+import { useDefinition } from "@/hooks/use-definition";
 import { trpc } from "@/utils/trpc";
 
 const addWordSchema = z.object({
   term: z.string().trim().min(1, "Enter the word you looked up"),
   definition: z.string(),
-  exampleSentence: z.string(),
 });
 
 export default function AddWordScreen() {
@@ -49,17 +48,17 @@ export default function AddWordScreen() {
   );
 
   const form = useForm({
-    defaultValues: { term: "", definition: "", exampleSentence: "" },
+    defaultValues: { term: "", definition: "" },
     validators: { onSubmit: addWordSchema },
     onSubmit: async ({ value }) => {
       const definition = value.definition.trim();
-      const exampleSentence = value.exampleSentence.trim();
 
       await createWord.mutateAsync({
         folderId,
         term: value.term.trim(),
+        // Stays on this user's row as definitionOverride — definitions are
+        // never shared between readers, only lookup counts are.
         definition: definition || undefined,
-        exampleSentence: exampleSentence || undefined,
         captureMethod: "manual",
       });
 
@@ -69,18 +68,20 @@ export default function AddWordScreen() {
 
   const term = useStore(form.store, (state) => state.values.term);
   const debouncedTerm = useDebouncedValue(term);
-  const lookup = useDictionaryLookup(debouncedTerm);
-  const suggestion = lookup.data;
+
+  // Device dictionary first, server second, result cached for next time — all
+  // of it behind one call. See hooks/use-definition.ts.
+  const resolution = useDefinition(debouncedTerm);
+  const suggestion = resolution.data?.status === "found" ? resolution.data : null;
 
   useEffect(() => {
     if (!suggestion || isDefinitionUserEdited.current) return;
     form.setFieldValue("definition", suggestion.definition);
-    if (suggestion.exampleSentence) {
-      form.setFieldValue("exampleSentence", suggestion.exampleSentence);
-    }
-  }, [suggestion, form]);
+    // Only the definition text matters here; `suggestion` is rebuilt each
+    // render, so depend on the value rather than the object.
+  }, [suggestion?.definition, form]);
 
-  const hasSearched = debouncedTerm.trim().length > 0 && !lookup.isFetching;
+  const hasSearched = debouncedTerm.trim().length > 0 && !resolution.isFetching;
 
   return (
     <Container className="px-6 pb-8">
@@ -118,14 +119,17 @@ export default function AddWordScreen() {
             </View>
             <Text className="text-muted text-sm font-serif leading-6">{suggestion.definition}</Text>
             <Text className="text-muted text-xs mt-2">
-              Found in your offline dictionary — edit it below if it&apos;s the wrong sense.
+              {suggestion.fromNetwork
+                ? "Found online — edit it below if it's the wrong sense."
+                : "Found in your offline dictionary — edit it below if it's the wrong sense."}
             </Text>
           </Surface>
         ) : hasSearched ? (
           <Surface variant="secondary" className="p-4 rounded-lg">
             <Text className="text-muted text-sm">
-              Not in your offline dictionary. Type a definition below, or save the word now and fill it in
-              later.
+              {resolution.data?.status === "unreachable"
+                ? "No connection, and not in your offline dictionary. Type a definition below, or save the word now and fill it in later."
+                : "Not in any dictionary — this may be a name or a word invented for the book. Type a definition below, or save the word now and fill it in later."}
             </Text>
           </Surface>
         ) : null}
@@ -144,22 +148,6 @@ export default function AddWordScreen() {
                 placeholder="Having keen insight or understanding"
                 multiline
                 numberOfLines={3}
-              />
-            </TextField>
-          )}
-        </form.Field>
-
-        <form.Field name="exampleSentence">
-          {(field) => (
-            <TextField>
-              <Label>Example sentence (optional)</Label>
-              <TextArea
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChangeText={field.handleChange}
-                placeholder="The sentence you found it in"
-                multiline
-                numberOfLines={2}
               />
             </TextField>
           )}

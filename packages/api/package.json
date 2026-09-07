@@ -13,6 +13,7 @@
   "dependencies": {
     "@better-vocab/auth": "workspace:*",
     "@better-vocab/db": "workspace:*",
+    "@better-vocab/domain": "workspace:*",
     "@better-vocab/env": "workspace:*",
     "@trpc/client": "catalog:",
     "@trpc/server": "catalog:",

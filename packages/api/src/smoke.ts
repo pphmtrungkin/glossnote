@@ -15,10 +15,21 @@
  * at a local database, same rule as seed.ts.
  */
 import assert from "node:assert/strict";
+import {
+  CAPTURE_METHODS,
+  DICTIONARY_SOURCES,
+  FOLDER_STATUSES,
+  OFFLINE_DICTIONARY_TIERS,
+  PREFERENCE_DEFAULTS,
+  normalizeTerm,
+} from "@better-vocab/domain";
 import { book } from "@better-vocab/db/schema/book";
 import { mapSearchResults } from "./routers/book";
+import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
 import { db } from "@better-vocab/db";
+import { user } from "@better-vocab/db/schema/auth";
+import { userPreference } from "@better-vocab/db/schema/preference";
 import { dictionaryEntry } from "@better-vocab/db/schema/dictionary";
 import { folder } from "@better-vocab/db/schema/book";
 import { word } from "@better-vocab/db/schema/word";
@@ -45,6 +56,22 @@ async function rejectsWith(fn: () => Promise<unknown>, pattern: RegExp, why: str
   }
   assert.fail(`expected a rejection: ${why}`);
 }
+
+// ---- the match key -------------------------------------------------------
+// Every join between a word and a definition matches on this and nothing else
+// — the shared dictionary_entry table, the on-device dictionary table, and the
+// crowdsourced aggregate's group-by. Four callers across three packages share
+// this one function; one of them stamps the bundled asset at build time, so a
+// drift here would make every offline lookup miss in silence.
+assert.equal(normalizeTerm("  Petrichor "), "petrichor", "trimmed and lowercased");
+assert.equal(normalizeTerm("SIETCH"), "sietch", "display casing never reaches the key");
+assert.equal(
+  normalizeTerm("gom  jabbar"),
+  "gom  jabbar",
+  "interior spacing is part of the term, not whitespace to strip",
+);
+assert.equal(normalizeTerm(normalizeTerm("  Dune ")), normalizeTerm("  Dune "), "idempotent");
+ok("normalizeTerm is the one match key: trim + lowercase, idempotent");
 
 // A previous run that failed mid-way can leave folders behind, and every
 // assertion below counts rows. Clear anything this script created before
@@ -82,6 +109,46 @@ await rejectsWith(
 );
 ok("another user cannot read or write into this user's folder");
 
+// Both deletes used to return { id } without checking whether a row matched,
+// so deleting someone else's word reported success. They now fail the same way
+// an unowned update does.
+await rejectsWith(
+  () => caller("someone_else").word.delete({ id: "seed_word_sietch" }),
+  /Word not found/,
+  "deleting another user's word must 404, not report success",
+);
+await rejectsWith(
+  () => caller("someone_else").folder.delete({ id: "seed_folder_dune" }),
+  /Folder not found/,
+  "deleting another user's folder must 404, not report success",
+);
+assert.equal(
+  (await api.word.listByFolder({ folderId: "seed_folder_dune" })).length,
+  3,
+  "a rejected delete leaves the rows alone",
+);
+ok("delete refuses another user's row instead of silently reporting success");
+
+// ---- the vocabulary Postgres actually holds ------------------------------
+// The enum values live in @better-vocab/domain and the Drizzle pgEnums are
+// built from them, so asserting those match each other proves nothing. This
+// asks the database: adding a value to the domain lists without generating a
+// migration fails here rather than at runtime.
+async function enumLabels(typeName: string) {
+  const result = await db.execute<{ label: string }>(sql`
+    select e.enumlabel as label
+      from pg_enum e
+      join pg_type t on t.oid = e.enumtypid
+     where t.typname = ${typeName}
+     order by e.enumsortorder`);
+  return result.rows.map((r) => r.label);
+}
+assert.deepEqual(await enumLabels("folder_status"), [...FOLDER_STATUSES]);
+assert.deepEqual(await enumLabels("capture_method"), [...CAPTURE_METHODS]);
+assert.deepEqual(await enumLabels("dictionary_source"), [...DICTIONARY_SOURCES]);
+assert.deepEqual(await enumLabels("offline_dictionary_tier"), [...OFFLINE_DICTIONARY_TIERS]);
+ok("every Postgres enum matches the shared domain vocabulary");
+
 // ---- unlimited freeform folders ------------------------------------------
 // The one-folder-per-book half of that index is exercised in the Hardcover
 // section below, where a book id actually exists to collide on.
@@ -100,21 +167,24 @@ const created = await api.word.create({
   folderId: free1.id,
   term: "  Petrichor ",
   definition: "The smell of rain on dry earth.",
-  exampleSentence: "Petrichor rose off the pavement after the storm.",
   captureMethod: "voice",
 });
 assert.equal(created!.normalizedTerm, "petrichor", "term is trimmed + lowercased into the match key");
 assert.equal(created!.term, "  Petrichor ", "display form is preserved verbatim");
 assert.equal(created!.bookId, null, "freeform folder cannot feed the aggregate");
-const entry = (await api.word.listByFolder({ folderId: free1.id }))[0].dictionaryEntry!;
-assert.equal(entry.term, "petrichor", "dictionary_entry is keyed by the normalized term");
-assert.equal(entry.exampleSentence, "Petrichor rose off the pavement after the storm.");
-ok("example sentence lands on the shared dictionary_entry, not on the word");
+ok("word.create normalizes the term and preserves the display form");
 
-// second user capturing the same term reuses that one entry (the AI-cost rule)
-const shared = await api.word.create({ folderId: free2.id, term: "petrichor", definition: "ignored", captureMethod: "manual" });
-assert.equal(shared!.dictionaryEntryId, created!.dictionaryEntryId, "same term must never create a second entry");
-ok("a term is only ever resolved once, globally");
+// The privacy model, asserted: a definition supplied by a device stays on that
+// user's own row and never reaches the shared cache. If this ever regresses,
+// the first person to capture a term defines it for every other reader.
+assert.equal(created!.definitionOverride, "The smell of rain on dry earth.");
+assert.equal(created!.dictionaryEntryId, null, "only a server-side resolver may fill dictionaryEntryId");
+assert.equal(
+  (await db.select().from(dictionaryEntry).where(eq(dictionaryEntry.term, "petrichor"))).length,
+  0,
+  "a client-supplied definition must never be written to the shared dictionary_entry",
+);
+ok("definitions stay on the user's own row; the shared cache is server-only");
 
 // ---- Hardcover search mapping -------------------------------------------
 // A trimmed real Typesense payload. `image` is deliberately absent from the
@@ -194,6 +264,179 @@ await api.folder.delete({ id: relinked.id });
 await db.delete(book).where(eq(book.id, relinked.bookId!));
 ok("re-picking a book reuses one row and refreshes its metadata");
 
+// ---- Datamuse definition parsing ----------------------------------------
+// Real payloads, captured from api.datamuse.com.
+assert.equal(
+  pickDefinition([{ word: "ephemeral", defs: ["adj\tLasting for a short period of time. "] }], "ephemeral"),
+  "Lasting for a short period of time.",
+  "the part-of-speech prefix is stripped and the text trimmed",
+);
+
+// The trap: `sp` is a fuzzy match, so a word that does not exist comes back as
+// a DIFFERENT word. Asking Datamuse for "sietch" really does return "sketch".
+// Without the exact-word check this files the wrong definition under the
+// user's word, silently and permanently.
+assert.equal(
+  pickDefinition(
+    [{ word: "sketch", score: 15046, tags: ["n", "v", "adj"], defs: ["n\tA rapidly executed freehand drawing. "] }],
+    "sietch",
+  ),
+  null,
+  "a fuzzy near-match must never be accepted as the definition",
+);
+
+assert.equal(pickDefinition([], "gom jabbar"), null, "no matches at all is null, not an error");
+assert.equal(
+  pickDefinition([{ word: "zyzzyva", tags: ["n"] }], "zyzzyva"),
+  null,
+  "an indexed word with no definitions is null",
+);
+assert.equal(
+  pickDefinition([{ word: "Ephemeral", defs: ["adj\tShort-lived."] }], "ephemeral"),
+  "Short-lived.",
+  "the exact-word check is case-insensitive",
+);
+assert.equal(pickDefinition({ error: "nope" }, "ephemeral"), null, "an unrecognised payload is null, not a crash");
+ok("Datamuse parsing strips the part of speech and rejects fuzzy near-matches");
+
+// ---- word.create links a server-resolved entry ---------------------------
+// dictionary.lookup is the only writer of dictionary_entry; word.create may
+// only read it. When a shared row exists the word points at it and stores no
+// override, so later AI enrichment of that row reaches every reader.
+await db.insert(dictionaryEntry).values({
+  id: "smoke_dict_lookup",
+  term: "quixotic",
+  definition: "Exceedingly idealistic; unrealistic and impractical.",
+  source: "dictionary_api",
+});
+const linkedWord = await api.word.create({
+  folderId: free1.id,
+  term: "Quixotic",
+  definition: "an offline gloss that should lose",
+  captureMethod: "manual",
+});
+assert.equal(linkedWord!.dictionaryEntryId, "smoke_dict_lookup", "an existing shared entry is linked");
+assert.equal(linkedWord!.definitionOverride, null, "the server's answer supersedes the device's gloss");
+await db.delete(dictionaryEntry).where(eq(dictionaryEntry.id, "smoke_dict_lookup"));
+ok("word.create links a server-resolved entry instead of storing an override");
+
+// ---- suggestions: shared counts, private definitions ---------------------
+// A second reader of the same book, so there is a population to aggregate.
+const OTHER_ID = "smoke_user_other";
+await db.delete(user).where(eq(user.id, OTHER_ID));
+await db.insert(user).values({ id: OTHER_ID, name: "Other Reader", email: "other@smoke.test", emailVerified: true });
+const otherFolder = await caller(OTHER_ID).folder.create({ title: "Dune", book: hit });
+for (const term of ["melange", "sietch", "gom jabbar"]) {
+  await caller(OTHER_ID).word.create({ folderId: otherFolder.id, term, captureMethod: "manual" });
+}
+// One capture the other reader opted out of — it must stay invisible.
+await db
+  .update(word)
+  .set({ contributesToAggregate: false })
+  .where(and(eq(word.userId, OTHER_ID), eq(word.normalizedTerm, "gom jabbar")));
+
+const myFolder = await api.folder.create({ title: "Dune", book: hit });
+await api.word.create({ folderId: myFolder.id, term: "melange", captureMethod: "manual" });
+
+const suggested = await api.word.suggestions({ folderId: myFolder.id });
+const terms = suggested.map((row) => row.normalizedTerm);
+assert.ok(terms.includes("sietch"), "a term other readers saved is suggested");
+assert.ok(!terms.includes("melange"), "a term already in my folder is not suggested back to me");
+assert.ok(!terms.includes("gom jabbar"), "an opted-out capture never appears in suggestions");
+assert.equal(suggested.find((r) => r.normalizedTerm === "sietch")!.readers, 1, "counts distinct readers");
+assert.deepEqual(
+  Object.keys(suggested[0]!).sort(),
+  ["normalizedTerm", "readers", "term"],
+  "suggestions expose counts only — no definition, sentence, or note can leak",
+);
+ok("suggestions rank others' saved words, minus mine, minus opt-outs");
+
+assert.deepEqual(await api.word.suggestions({ folderId: free2.id }), [], "a freeform folder has no book to compare against");
+ok("freeform folders return no suggestions rather than an error");
+
+await api.folder.delete({ id: myFolder.id });
+await caller(OTHER_ID).folder.delete({ id: otherFolder.id });
+await db.delete(user).where(eq(user.id, OTHER_ID));
+
+// ---- preferences ---------------------------------------------------------
+// The opt-out the privacy model promises: word.create reads this column, and
+// until now nothing could write it.
+//
+// A reader with no row yet gets the shared defaults, and asking must not
+// create one — the settings screen opens without a write.
+const unseen = await caller("someone_else").preference.get();
+assert.equal(unseen.contributeToAggregateByDefault, PREFERENCE_DEFAULTS.contributeToAggregateByDefault);
+assert.equal(unseen.offlineDictionaryTier, PREFERENCE_DEFAULTS.offlineDictionaryTier);
+assert.equal(
+  (await db.select().from(userPreference).where(eq(userPreference.userId, "someone_else"))).length,
+  0,
+  "reading preferences must not create a row",
+);
+ok("preference.get returns the shared defaults without writing a row");
+
+// This user is seeded with a row, so these exercise the conflict path.
+const optedOut = await api.preference.update({ contributeToAggregateByDefault: false });
+assert.equal(optedOut.contributeToAggregateByDefault, false);
+assert.equal(optedOut.offlineDictionaryTier, "core", "a partial update leaves the other field alone");
+const tiered = await api.preference.update({ offlineDictionaryTier: "extended" });
+assert.equal(tiered.offlineDictionaryTier, "extended");
+assert.equal(tiered.contributeToAggregateByDefault, false, "and does not resurrect the field it omits");
+ok("preference.update accepts one field at a time without clobbering the other");
+
+// The insert path needs a real user with no row of their own.
+const FRESH_ID = "smoke_user_fresh";
+await db.delete(user).where(eq(user.id, FRESH_ID));
+await db.insert(user).values({ id: FRESH_ID, name: "Fresh Reader", email: "fresh@smoke.test", emailVerified: true });
+const firstWrite = await caller(FRESH_ID).preference.update({ offlineDictionaryTier: "extended" });
+assert.equal(firstWrite.offlineDictionaryTier, "extended", "the first update creates the row");
+assert.equal(
+  firstWrite.contributeToAggregateByDefault,
+  PREFERENCE_DEFAULTS.contributeToAggregateByDefault,
+  "a field the caller omitted takes the shared default, not undefined",
+);
+await db.delete(user).where(eq(user.id, FRESH_ID));
+ok("preference.update creates the row on a user's first write");
+
+// The opt-out has to actually reach a capture, not merely persist.
+await api.preference.update({ contributeToAggregateByDefault: false });
+const quiet = await api.word.create({ folderId: free2.id, term: "susurrus", captureMethod: "manual" });
+assert.equal(quiet.contributesToAggregate, false, "a capture honours the user's opt-out");
+// Also restores the seeded values, so the seed is back to its original shape.
+await api.preference.update({ contributeToAggregateByDefault: true, offlineDictionaryTier: "core" });
+const loud = await api.word.create({ folderId: free2.id, term: "lambent", captureMethod: "manual" });
+assert.equal(loud.contributesToAggregate, true, "and follows the toggle back");
+ok("word.create reads the preference the router writes");
+
+// ---- offline flush -------------------------------------------------------
+// One bad row must not strand the rest of the queue, so results are per
+// capture rather than all-or-nothing.
+const flushed = await api.word.createMany({
+  captures: [
+    { localId: "local-1", folderId: free2.id, term: "  Halcyon ", captureMethod: "manual" },
+    { localId: "local-2", folderId: free2.id, term: "susurrus", captureMethod: "voice" },
+    { localId: "local-3", folderId: "folder_deleted_elsewhere", term: "orphan", captureMethod: "manual" },
+  ],
+});
+assert.equal(flushed.length, 3, "every queued capture gets an outcome");
+assert.equal(flushed[0]!.status, "saved");
+assert.equal(flushed[2]!.status, "dropped", "a folder that no longer exists is dropped, not retried forever");
+assert.equal(flushed[2]!.localId, "local-3", "localId is echoed back so the device can match rows");
+
+const halcyon = (await api.word.listByFolder({ folderId: free2.id })).find((w) => w.term === "  Halcyon ");
+assert.equal(halcyon!.normalizedTerm, "halcyon", "a flushed capture normalizes exactly like a live one");
+
+// local-2 replays a word already captured above: the same row comes back, so a
+// device that crashed mid-flush can resend the whole queue safely.
+const replayed = flushed[1]!;
+assert.equal(replayed.status === "saved" && replayed.wordId, quiet.id, "a replayed capture is idempotent");
+ok("word.createMany flushes a queue, reports each row, and is safe to resend");
+
+const rejectedBatch = await caller("someone_else").word.createMany({
+  captures: [{ localId: "x", folderId: free2.id, term: "trespass", captureMethod: "manual" }],
+});
+assert.equal(rejectedBatch[0]!.status, "dropped", "another user's folder is never writable through the batch");
+ok("createMany scopes folder ownership to the caller");
+
 // ---- update --------------------------------------------------------------
 const mastered = await api.word.update({ id: created!.id, mastered: true, definitionOverride: "Rain smell." });
 assert.equal(mastered!.mastered, true);
@@ -201,25 +444,8 @@ assert.ok(mastered!.masteredAt instanceof Date, "masteredAt is stamped alongside
 assert.equal((await api.word.update({ id: created!.id, mastered: false }))!.masteredAt, null, "unmastering clears the timestamp");
 ok("word.update sets/clears masteredAt with mastered");
 
-// ---- crowdsourced aggregate (live query, no counter table) ---------------
-const agg = async (bookId: string) =>
-  (await db.execute(sql`
-    select w.normalized_term, min(w.term) as term, count(distinct w.user_id)::int as freq, d.definition
-      from word w left join dictionary_entry d on d.term = w.normalized_term
-     where w.book_id = ${bookId} and w.contributes_to_aggregate
-     group by w.normalized_term, d.definition
-     order by freq desc, w.normalized_term`)).rows as { normalized_term: string; definition: string | null }[];
-
-const duneAgg = await agg("seed_book_dune");
-assert.deepEqual(duneAgg.map((r) => r.normalized_term).sort(), ["gom jabbar", "prescience", "sietch"]);
-assert.equal(duneAgg.find((r) => r.normalized_term === "sietch")!.definition, "A Fremen cave community; a place of refuge.");
-const paleAgg = await agg("seed_book_pale_fire");
-assert.ok(!paleAgg.some((r) => r.normalized_term === "iridescent"), "contributesToAggregate=false must exclude the word");
-assert.ok(!Object.keys(duneAgg[0]).some((k) => /note|example|sentence/.test(k)), "aggregate must expose no spoiler columns");
-ok("aggregate ranks by distinct readers, honours opt-out, joins on normalized term");
-
 // ---- cascade -------------------------------------------------------------
-await api.folder.delete({ id: free1.id });
+assert.deepEqual(await api.folder.delete({ id: free1.id }), { id: free1.id }, "delete returns the row it removed");
 await api.folder.delete({ id: free2.id });
 assert.equal((await db.select().from(word).where(eq(word.folderId, free1.id))).length, 0, "deleting a folder cascades its words");
 assert.equal(

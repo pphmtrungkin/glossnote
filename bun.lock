@@ -46,6 +46,7 @@
       "dependencies": {
         "@better-auth/expo": "catalog:",
         "@better-vocab/api": "workspace:*",
+        "@better-vocab/domain": "workspace:*",
         "@better-vocab/env": "workspace:*",
         "@expo-google-fonts/literata": "^0.4.3",
         "@expo/metro-runtime": "~57.0.15",
@@ -124,6 +125,7 @@
       "dependencies": {
         "@better-vocab/auth": "workspace:*",
         "@better-vocab/db": "workspace:*",
+        "@better-vocab/domain": "workspace:*",
         "@better-vocab/env": "workspace:*",
         "@trpc/client": "catalog:",
         "@trpc/server": "catalog:",
@@ -159,6 +161,7 @@
     "packages/db": {
       "name": "@better-vocab/db",
       "dependencies": {
+        "@better-vocab/domain": "workspace:*",
         "@better-vocab/env": "workspace:*",
         "better-auth": "catalog:",
         "dotenv": "catalog:",
@@ -170,6 +173,14 @@
         "@better-vocab/config": "workspace:*",
         "@types/pg": "^8.20.0",
         "drizzle-kit": "^0.31.10",
+        "typescript": "^6.0.3",
+      },
+    },
+    "packages/domain": {
+      "name": "@better-vocab/domain",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@better-vocab/config": "workspace:*",
         "typescript": "^6.0.3",
       },
     },
@@ -376,6 +387,8 @@
     "@better-vocab/config": ["@better-vocab/config@workspace:packages/config"],
 
     "@better-vocab/db": ["@better-vocab/db@workspace:packages/db"],
+
+    "@better-vocab/domain": ["@better-vocab/domain@workspace:packages/domain"],
 
     "@better-vocab/env": ["@better-vocab/env@workspace:packages/env"],
 

@@ -5,7 +5,51 @@ import { Button, Card, Chip, Spinner, Surface, useThemeColor, useToast } from "h
 import { Alert, Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
+import { useDefinition } from "@/hooks/use-definition";
 import { trpc } from "@/utils/trpc";
+
+// One suggested term. The reader count comes from the server; the definition
+// does not — it is resolved here against this device's own dictionary, which
+// is the whole point of the design: readers share how often a word was saved,
+// never what it means.
+function SuggestionRow({
+  term,
+  readers,
+  onAdd,
+  isAdding,
+}: {
+  term: string;
+  readers: number;
+  onAdd: (definition: string | undefined) => void;
+  isAdding: boolean;
+}) {
+  // Local tiers only: this renders once per suggested term, and firing a
+  // request per visible row would spend the whole list's worth of round trips
+  // to fill in text the reader has not asked for yet.
+  const lookup = useDefinition(term, { online: false });
+  const definition = lookup.data?.status === "found" ? lookup.data.definition : null;
+
+  return (
+    <Card variant="secondary" className="p-4">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1">
+          <Card.Title className="font-serif-semibold text-base">{term}</Card.Title>
+          {definition ? (
+            <Card.Description className="font-serif leading-6">{definition}</Card.Description>
+          ) : (
+            <Text className="text-muted text-xs mt-1">Not in your offline dictionary yet.</Text>
+          )}
+          <Text className="text-muted text-xs mt-2">
+            {readers === 1 ? "1 other reader saved this" : `${readers} other readers saved this`}
+          </Text>
+        </View>
+        <Button size="sm" variant="tertiary" isDisabled={isAdding} onPress={() => onAdd(definition ?? undefined)}>
+          <Button.Label>Add</Button.Label>
+        </Button>
+      </View>
+    </Card>
+  );
+}
 
 export default function FolderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -19,10 +63,20 @@ export default function FolderScreen() {
 
   const words = useQuery(trpc.word.listByFolder.queryOptions({ folderId: id }));
 
+  // Only meaningful once the folder is linked to a book — the server returns an
+  // empty list for freeform folders rather than erroring.
+  const suggestions = useQuery({
+    ...trpc.word.suggestions.queryOptions({ folderId: id }),
+    enabled: !!folder?.bookId,
+  });
+
   function invalidateWords() {
-    return queryClient.invalidateQueries({
-      queryKey: trpc.word.listByFolder.queryKey({ folderId: id }),
-    });
+    // Adding a suggested word removes it from the suggestion list, so both
+    // queries have to refetch.
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: trpc.word.listByFolder.queryKey({ folderId: id }) }),
+      queryClient.invalidateQueries({ queryKey: trpc.word.suggestions.queryKey({ folderId: id }) }),
+    ]);
   }
 
   function showError(error: { message: string }) {
@@ -34,6 +88,9 @@ export default function FolderScreen() {
   );
   const deleteWord = useMutation(
     trpc.word.delete.mutationOptions({ onSuccess: invalidateWords, onError: showError }),
+  );
+  const addWord = useMutation(
+    trpc.word.create.mutationOptions({ onSuccess: invalidateWords, onError: showError }),
   );
 
   function confirmDelete(wordId: string, term: string) {
@@ -134,6 +191,28 @@ export default function FolderScreen() {
           );
         })}
       </View>
+
+      {!!suggestions.data?.length && (
+        <View className="pt-8">
+          <Text className="text-foreground font-serif-medium text-base mb-1">Other readers looked up</Text>
+          <Text className="text-muted text-xs mb-3">
+            Words readers of this book saved, that you don&apos;t have yet.
+          </Text>
+          <View className="gap-3">
+            {suggestions.data.map((suggestion) => (
+              <SuggestionRow
+                key={suggestion.normalizedTerm}
+                term={suggestion.term}
+                readers={suggestion.readers}
+                isAdding={addWord.isPending}
+                onAdd={(definition) =>
+                  addWord.mutate({ folderId: id, term: suggestion.term, definition, captureMethod: "manual" })
+                }
+              />
+            ))}
+          </View>
+        </View>
+      )}
     </Container>
   );
 }
