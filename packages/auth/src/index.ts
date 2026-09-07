@@ -17,7 +17,7 @@ export function createAuth() {
     trustedOrigins: [
       env.CORS_ORIGIN,
 
-      "better-vocab://",
+      "glossnote://",
       "exp://",
       "http://localhost:8081",
     ],

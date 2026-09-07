@@ -1,14 +1,14 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
-export const LOCAL_DB_NAME = "lexishelf.db";
+export const LOCAL_DB_NAME = "glossnote.db";
 
-const LOCAL_DB_VERSION = 2;
+const LOCAL_DB_VERSION = 3;
 
-// Runs on every app start via SQLiteProvider's onInit. `dictionary_core` is
-// declared IF NOT EXISTS only as a safety net for when no bundled asset has
-// been wired up yet (see apps/native/scripts/build-dictionary-db.ts) — once a
-// pre-populated .db ships via `assetSource`, this table already exists with
-// data by the time this migration runs, and the statement is a no-op.
+// Runs on every app start via SQLiteProvider's onInit. The dictionary tables
+// are declared IF NOT EXISTS only as a safety net for when no bundled asset
+// has been wired up yet (see apps/native/scripts/build-dictionary-db.ts) —
+// once a pre-populated .db ships via `assetSource`, they already exist with
+// data by the time this migration runs, and the statements are no-ops.
 export async function migrateLocalDb(db: SQLiteDatabase) {
   const row = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
   let version = row?.user_version ?? 0;
@@ -79,6 +79,44 @@ export async function migrateLocalDb(db: SQLiteDatabase) {
       );
     `);
     version = 2;
+  }
+
+  if (version === 2) {
+    // Collapse dictionary_core / dictionary_extended / cached_lookup into one
+    // table. They held the same columns and were queried as a three-hop
+    // fallthrough; one table with `source` + `rank` makes that a single
+    // indexed SELECT, and makes "drop the extended pack" a DELETE rather than
+    // a DROP TABLE. Ordering by source also fixes the old priority: a cached
+    // online/AI definition should win over a stale bundled one.
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS dictionary (
+        term TEXT NOT NULL,
+        definition TEXT NOT NULL,
+        part_of_speech TEXT,
+        example_sentence TEXT,
+        -- 'core' = bundled base set, 'extended' = downloadable pack,
+        -- 'cached' = resolved online and kept for offline reuse.
+        source TEXT NOT NULL,
+        -- 0 = most frequent sense. Only 'extended' rows use it; the other
+        -- tiers are one row per term.
+        rank INTEGER NOT NULL DEFAULT 0
+      );
+      -- Unique rather than plain: it both backs the term lookup and enforces
+      -- one row per sense, so re-merging a downloaded pack is idempotent.
+      CREATE UNIQUE INDEX IF NOT EXISTS dictionary_term_source_rank_uidx ON dictionary (term, source, rank);
+
+      INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sentence, source, rank)
+        SELECT term, definition, part_of_speech, example_sentence, 'core', 0 FROM dictionary_core;
+      INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sentence, source, rank)
+        SELECT term, definition, part_of_speech, example_sentence, 'extended', rank FROM dictionary_extended;
+      INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sentence, source, rank)
+        SELECT term, definition, NULL, example_sentence, 'cached', 0 FROM cached_lookup;
+
+      DROP TABLE dictionary_core;
+      DROP TABLE dictionary_extended;
+      DROP TABLE cached_lookup;
+    `);
+    version = 3;
   }
 
   await db.execAsync(`PRAGMA user_version = ${version}`);

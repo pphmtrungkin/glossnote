@@ -8,6 +8,20 @@
       "when": 1788354755471,
       "tag": "0000_stormy_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788758081515,
+      "tag": "0001_tricky_silver_surfer",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788767254185,
+      "tag": "0002_collapse_aggregate_and_unused_columns",
+      "breakpoints": true
     }
   ]
 }

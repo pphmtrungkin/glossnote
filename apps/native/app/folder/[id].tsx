@@ -112,8 +112,8 @@ export default function FolderScreen() {
                       <Chip.Label>Pending definition</Chip.Label>
                     </Chip>
                   )}
-                  {word.exampleSentence ? (
-                    <Text className="text-muted text-xs italic mt-2 font-serif">{word.exampleSentence}</Text>
+                  {word.dictionaryEntry?.exampleSentence ? (
+                    <Text className="text-muted text-xs italic mt-2 font-serif">{word.dictionaryEntry.exampleSentence}</Text>
                   ) : null}
                 </View>
               </View>

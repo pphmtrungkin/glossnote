@@ -1,4 +1,4 @@
-# better-vocab
+# GlossNote
 
 This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines React Native, Expo, Hono, TRPC, and more.
 
@@ -44,12 +44,12 @@ bun run dev
 ```
 
 Use the Expo Go app to run the mobile application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+The API is running at [http://localhost:3333](http://localhost:3333).
 
 ## Project Structure
 
 ```
-better-vocab/
+glossnote/
 ├── apps/
 │   ├── native/      # Mobile application (React Native, Expo)
 │   └── server/      # Backend API (Hono, TRPC)

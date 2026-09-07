@@ -60,7 +60,12 @@ export const wordRouter = router({
       if (input.definition) {
         const [inserted] = await db
           .insert(dictionaryEntry)
-          .values({ term: normalizedTerm, definition: input.definition, source: "dictionary_api" })
+          .values({
+            term: normalizedTerm,
+            definition: input.definition,
+            exampleSentence: input.exampleSentence,
+            source: "dictionary_api",
+          })
           .onConflictDoNothing({ target: dictionaryEntry.term })
           .returning();
         dictionaryEntryId =
@@ -86,7 +91,6 @@ export const wordRouter = router({
           term: input.term,
           normalizedTerm,
           dictionaryEntryId,
-          exampleSentence: input.exampleSentence,
           captureMethod: input.captureMethod,
           // Snapshot at capture time — flipping the global toggle later
           // shouldn't retroactively change past contributions.

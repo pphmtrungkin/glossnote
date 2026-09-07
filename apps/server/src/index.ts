@@ -36,4 +36,10 @@ app.get("/", (c) => {
   return c.text("OK");
 });
 
-export default app;
+// Bun reads `port` off the default export. Stated explicitly rather than
+// leaning on Bun's implicit 3000, so the port is greppable and overridable
+// via PORT (see packages/env/src/server.ts).
+export default {
+  port: env.PORT,
+  fetch: app.fetch,
+};

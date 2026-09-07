@@ -1,4 +1,5 @@
 import { protectedProcedure, publicProcedure, router } from "../index";
+import { bookRouter } from "./book";
 import { folderRouter } from "./folder";
 import { wordRouter } from "./word";
 
@@ -12,6 +13,7 @@ export const appRouter = router({
       user: ctx.session.user,
     };
   }),
+  book: bookRouter,
   folder: folderRouter,
   word: wordRouter,
 });

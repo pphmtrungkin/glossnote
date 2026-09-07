@@ -15,14 +15,14 @@ Schema files live in `packages/db/src/schema/`, one file per domain group, all r
 
 ```ts
 // schema/book.ts (shape)
-book: { id, provider, externalId, title, authors[], coverImageUrl, description, topics[], raw (jsonb) }
+book: { id, provider, externalId, title, authors[], coverImageUrl, description }
 folder: { id, userId, bookId?, title, status: "reading" | "finished" | "misc" }
 ```
 
 **`book`** is a *cache* of metadata pulled from an external book API (see [Book search](/docs/book-search)). Two things worth noticing:
 
-- `provider` and `externalId` are plain `text`, not a Postgres enum. That's deliberate — the metadata source is still just Hardcover today, but keeping it as text means adding or swapping providers later never requires a schema migration.
-- `raw jsonb` stores the *entire* upstream API response, unparsed. It's a safety net: any field the upstream API returns that we haven't explicitly mapped to a column yet is still sitting there if we need it later, instead of being silently dropped on import.
+- `provider` and `externalId` are plain `text`, not a Postgres enum. That's deliberate — the metadata source is still just Hardcover today, but keeping it as text means adding or swapping providers later never requires a schema migration. The pair is uniquely indexed, which is what makes `folder.create`'s upsert idempotent.
+- There is no `raw jsonb` column holding the unparsed upstream response, and no `topics[]`. Both were dropped: `raw` stored a copy of something re-fetchable in one API call, and `topics` fed an AI suggestion feature that doesn't exist. Columns kept "just in case" are rows you pay to store and migrate forever — add them back with the feature that reads them.
 
 **`folder`** is a user's personal shelf entry — "I'm tracking this book." `bookId` is nullable on purpose, because a folder doesn't have to be tied to a real book (freeform/misc lists are a supported case, not an edge case). `title` is copied from the book at creation time — a small denormalization so the home screen can render a list of folders without joining to `book` on every load.
 
@@ -35,7 +35,7 @@ Think of `book` as one shared Wikipedia-style page per book, and `folder` as one
 word: {
   id, userId, folderId, bookId?,
   term, normalizedTerm,
-  dictionaryEntryId?, definitionOverride?, exampleSentence?,
+  dictionaryEntryId?, definitionOverride?, personalNote?,
   captureMethod: "manual" | "voice",
   contributesToAggregate, mastered, masteredAt?, lastReviewedAt?,
 }
@@ -55,24 +55,29 @@ Here's the question worth sitting with: if 500 users all look up the word "ephem
 
 ```ts
 // schema/dictionary.ts (shape)
-dictionaryEntry: { id, term (unique), definition, source: "bundled" | "dictionary_api" | "ai_enhanced", audioUrl? }
+dictionaryEntry: { id, term (unique), definition, exampleSentence?, usageNote?, source: "bundled" | "dictionary_api" | "ai_enhanced", enrichedAt? }
 ```
 
 No — `dictionaryEntry` is a **shared cache**, one row per unique term, with no relationship to any single user. The first time anyone looks up "ephemeral," it gets resolved (dictionary API or AI) once and saved here. When the next user logs the same word, `word.create` checks this table first, finds it already exists, and just points their new `word` row at the same `dictionaryEntryId` — no repeat API call, no repeat cost.
 
+`term` here holds the **normalized** form — a lowercased match key, not a display string. Anything joining to this table must normalize first; joining a display-cased `"Serendipity"` silently matches nothing.
+
+AI enrichment (`exampleSentence`, `usageNote`, and `enrichedAt` marking when it last ran) lives on this shared row for the same reason the definition does: it's what holds the spec's cost target that *each unique word triggers at most one AI call across the entire user base*. Enrich once, serve forever. A per-word example sentence column used to exist alongside it and was removed — one shared row is the whole point, and the fallback chain it created was a branch in two screens for a case nobody had asked for.
+
 This also explains `word.definitionOverride`: if a user wants to write their own phrasing of a definition, that edit can't go into the *shared* `dictionaryEntry.definition` — that would silently change the definition for every other user who already has that word saved. So personal edits live on `word` and only affect that one user's view.
 
-One deliberate simplification: `dictionaryEntry` stores exactly *one* definition per term, even though words often have multiple senses ("bank" the building vs. "bank" the riverside). This table represents "the best known resolution we have," not a full multi-sense dictionary — that's a different concern, handled entirely on-device (see [Offline dictionary](/docs/offline-dictionary)), because the on-device WordNet data is static reference data with no server-side equivalent, while this table's real analog is the on-device `cached_lookup` table, which is *also* single-row-per-term. The two designs already agree; it isn't an oversight.
+One deliberate simplification: `dictionaryEntry` stores exactly *one* definition per term, even though words often have multiple senses ("bank" the building vs. "bank" the riverside). This table represents "the best known resolution we have," not a full multi-sense dictionary — that's a different concern, handled entirely on-device (see [Offline dictionary](/docs/offline-dictionary)), because the on-device WordNet data is static reference data with no server-side equivalent, while this table's real analog is the on-device `dictionary` table's `cached` rows, which are *also* single-row-per-term. The two designs already agree; it isn't an oversight.
 
-## Settings: `userPreference` + `pushToken`
+## Settings: `userPreference`
 
 ```ts
 // schema/preference.ts (shape)
 userPreference: { userId (PK), contributeToAggregateByDefault, offlineDictionaryTier: "core" | "extended" }
-pushToken: { id, userId, token (unique), platform }
 ```
 
-`userPreference` is a 1:1 sidecar table for app settings, kept *separate* from `user` rather than adding columns directly to it — because `user` is generated and migrated by Better Auth, and mixing app-specific settings into a table a third-party library owns is asking for a migration conflict eventually. `pushToken` is one row per device (a user might have a phone *and* a tablet registered), hence a separate table instead of a single column.
+A 1:1 sidecar table for app settings, kept *separate* from `user` rather than adding columns directly to it — because `user` is generated and migrated by Better Auth, and mixing app-specific settings into a table a third-party library owns is asking for a migration conflict eventually.
+
+A `pushToken` table used to sit here for the weekly digest. It was deleted: there is no push-sending code anywhere in the repo, and registering Expo tokens is a few minutes of work whenever the digest actually gets built. Same principle as `book.raw` above — schema with no producer is a liability, not a head start.
 
 ## How it all connects
 
@@ -81,8 +86,7 @@ user ──┬── folder ──── book
        │      │
        │      └── word ──┬── dictionaryEntry   (shared: many words point to one entry)
        │                 └── (denormalized userId + bookId, see above)
-       ├── userPreference (1:1)
-       └── pushToken (1:many)
+       └── userPreference (1:1)
 ```
 
 ## Worked example: logging a word
@@ -91,7 +95,7 @@ Walking through what `word.create` actually does when a user in the "Dune" folde
 
 1. Confirm the "Dune" folder belongs to this user, and grab its `bookId` while already fetching that row.
 2. Normalize the term to `"ornithopter"`.
-3. If a definition came with the request: check `dictionaryEntry` for an existing `"ornithopter"` row. Someone else has likely already looked this word up in this exact book — reuse it if so, otherwise create it.
+3. If a definition came with the request: check `dictionaryEntry` for an existing `"ornithopter"` row. Someone else has likely already looked this word up in this exact book — reuse it if so, otherwise create it, carrying any example sentence onto that shared row.
 4. Look up this user's `userPreference` to snapshot their current aggregate opt-in setting.
 5. Insert the `word` row — `userId`, `folderId`, `bookId` (all three, even though two are technically derivable), the term, the resolved `dictionaryEntryId` (or `null` if still pending), and the snapshotted preference. If this exact `(folderId, normalizedTerm)` already exists, the insert quietly no-ops and the existing row is returned instead.
 
@@ -105,4 +109,6 @@ GROUP BY normalized_term
 ORDER BY count DESC;
 ```
 
-— which is exactly the query the `bookId` denormalization and its index exist to make fast, and exactly why it's computed live rather than cached: a cached/stale version of this list risks showing outdated (and potentially spoiler-revealing) results if it's ever served while offline. See [Implementation status](/docs/implementation-status) — this specific query hasn't been written as a procedure yet.
+— which is exactly the query the `bookId` denormalization and its index exist to make fast. There is deliberately **no** materialized `book_word_aggregate` counter table; one existed and was deleted. A counter counts *captures*, so one user with the word in ten folders would read as ten readers, and keeping it accurate means getting increment-on-create, decrement-on-delete, opt-out flips, and folder cascades right in four separate places. `COUNT(DISTINCT user_id)` is both smaller and more correct. Add a counter back only when this query shows up in slow logs.
+
+It is also computed live rather than cached: a cached/stale version of this list risks showing outdated (and potentially spoiler-revealing) results if it's ever served while offline. See [Implementation status](/docs/implementation-status) — this specific query hasn't been written as a procedure yet.

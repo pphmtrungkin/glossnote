@@ -11,7 +11,7 @@ Auth is handled by [Better Auth](https://better-auth.com), configured in exactly
 // packages/auth/src/index.ts (shape, not verbatim)
 betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  trustedOrigins: [env.CORS_ORIGIN, "better-vocab://", "exp://", "http://localhost:8081"],
+  trustedOrigins: [env.CORS_ORIGIN, "glossnote://", "exp://", "http://localhost:8081"],
   emailAndPassword: { enabled: true },
   plugins: [expo()],
 });
@@ -20,7 +20,7 @@ betterAuth({
 - **`drizzleAdapter`** points Better Auth at our own Postgres database and our own `user`/`session`/`account`/`verification` tables (`packages/db/src/schema/auth.ts`) instead of managing its own separate database. Better Auth generates the *shape* of those tables, but they live in our schema, migrate alongside everything else, and are queryable with the same Drizzle client as every other table.
 - **`emailAndPassword: { enabled: true }`** is the only sign-in method currently wired up. The product flow doc mentions magic link and OAuth as options — neither is configured yet. If you go looking for them and don't find them, that's not a bug, it's just not built.
 - **`expo()` plugin** is what makes auth work on a mobile app instead of a browser at all. A normal web session relies on the browser automatically attaching cookies to every request; a React Native app has no such thing. This plugin adds the deep-link handshake and secure-storage-backed session handling that Expo needs.
-- **`trustedOrigins`** includes the app's custom URL scheme (`better-vocab://`) and Expo's dev scheme (`exp://`) — without these, Better Auth would reject the redirect that completes login on a device.
+- **`trustedOrigins`** includes the app's custom URL scheme (`glossnote://`) and Expo's dev scheme (`exp://`) — without these, Better Auth would reject the redirect that completes login on a device.
 
 ## How a session actually reaches your code
 

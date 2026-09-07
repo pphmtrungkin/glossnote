@@ -31,9 +31,11 @@ export const word = pgTable(
     // Personal edit that overrides the shared dictionaryEntry.definition for
     // this user's copy, without mutating the shared cache other users read.
     definitionOverride: text("definition_override"),
-    // AI-generated, contextual to this capture — deliberately not on
-    // dictionaryEntry, since the crowdsourced view must never show it.
-    exampleSentence: text("example_sentence"),
+    // SoftwareSpec §4.1 `personal_note`. Free-form user annotation, distinct
+    // from definitionOverride: that one replaces the definition, this one sits
+    // alongside it. Never contributes to the aggregate — it's private by
+    // construction and would leak reading context if surfaced.
+    personalNote: text("personal_note"),
     captureMethod: captureMethodEnum("capture_method").notNull(),
     // Snapshot of the user's opt-out preference at capture time, so flipping
     // the global toggle later doesn't retroactively change past contributions.
@@ -55,8 +57,10 @@ export const word = pgTable(
     // Prevents the same term being logged twice in one folder — also what
     // makes "tap a crowdsourced suggestion to add it to my folder" idempotent.
     uniqueIndex("word_folderId_normalizedTerm_uidx").on(table.folderId, table.normalizedTerm),
-    // Backs the crowdsourced frequency aggregate: WHERE bookId = ? AND
-    // contributesToAggregate = true GROUP BY normalizedTerm.
+    // Backs the crowdsourced frequency aggregate, which is served as a live
+    // query rather than a materialized counter table:
+    //   SELECT normalized_term, count(DISTINCT user_id) FROM word
+    //   WHERE book_id = ? AND contributes_to_aggregate GROUP BY normalized_term
     index("word_bookId_contributesToAggregate_idx").on(table.bookId, table.contributesToAggregate),
   ],
 );

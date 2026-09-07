@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "better-vocab",
-    "slug": "better-vocab",
+    "name": "GlossNote",
+    "slug": "glossnote",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "better-vocab",
+    "scheme": "glossnote",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.better-vocab"
+      "bundleIdentifier": "com.anonymous.glossnote"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +19,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.bettervocab"
+      "package": "com.anonymous.glossnote"
     },
     "web": {
       "bundler": "metro",

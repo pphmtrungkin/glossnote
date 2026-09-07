@@ -6,10 +6,13 @@
 //
 // Usage: bun run scripts/build-dictionary-db.ts <core|extended> <source.json> <output.db>
 //
-// core:     one row per term (source must already be deduped to one sense
-//           per term); matches apps/native/lib/local-db.ts's dictionary_core.
-// extended: many rows per term allowed (multiple senses), ordered by an
-//           optional `rank` field on each entry; matches dictionary_extended.
+// core:     the bundled base set, one row per term (source must already be
+//           deduped to one sense per term).
+// extended: the downloadable pack, many rows per term allowed (multiple
+//           senses), ordered by an optional `rank` field on each entry.
+//
+// Both write the same `dictionary` table that apps/native/lib/local-db.ts
+// creates — the only difference is the `source` value stamped on each row.
 import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 
@@ -24,51 +27,35 @@ const entries: Entry[] = JSON.parse(readFileSync(sourcePath, "utf-8"));
 
 const db = new Database(outputPath, { create: true });
 
-if (mode === "core") {
-  db.run(`
-    CREATE TABLE dictionary_core (
-      term TEXT PRIMARY KEY,
-      definition TEXT NOT NULL,
-      part_of_speech TEXT,
-      example_sentence TEXT
-    );
-    CREATE VIRTUAL TABLE dictionary_fts USING fts5(term, content='dictionary_core', content_rowid='rowid');
-  `);
-  const insert = db.prepare(
-    "INSERT OR IGNORE INTO dictionary_core (term, definition, part_of_speech, example_sentence) VALUES (?, ?, ?, ?)",
+// Must match local-db.ts's schema and LOCAL_DB_VERSION exactly: a shipped
+// asset opens with this user_version already set, so migrateLocalDb returns
+// early and never touches the pre-populated rows.
+db.run(`
+  CREATE TABLE dictionary (
+    term TEXT NOT NULL,
+    definition TEXT NOT NULL,
+    part_of_speech TEXT,
+    example_sentence TEXT,
+    source TEXT NOT NULL,
+    rank INTEGER NOT NULL DEFAULT 0
   );
-  const insertFts = db.prepare("INSERT INTO dictionary_fts (rowid, term) SELECT rowid, term FROM dictionary_core WHERE term = ?");
+  CREATE UNIQUE INDEX dictionary_term_source_rank_uidx ON dictionary (term, source, rank);
+  PRAGMA user_version = 3;
+`);
 
-  db.transaction(() => {
-    for (const entry of entries) {
-      const normalized = entry.term.trim().toLowerCase();
-      insert.run(normalized, entry.definition, entry.partOfSpeech ?? null, entry.exampleSentence ?? null);
-      insertFts.run(normalized);
-    }
-  })();
-} else {
-  db.run(`
-    CREATE TABLE dictionary_extended (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      term TEXT NOT NULL,
-      definition TEXT NOT NULL,
-      part_of_speech TEXT,
-      example_sentence TEXT,
-      rank INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE INDEX dictionary_extended_term_idx ON dictionary_extended (term);
-  `);
-  const insert = db.prepare(
-    "INSERT INTO dictionary_extended (term, definition, part_of_speech, example_sentence, rank) VALUES (?, ?, ?, ?, ?)",
-  );
+const insert = db.prepare(
+  "INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sentence, source, rank) VALUES (?, ?, ?, ?, ?, ?)",
+);
 
-  db.transaction(() => {
-    for (const entry of entries) {
-      const normalized = entry.term.trim().toLowerCase();
-      insert.run(normalized, entry.definition, entry.partOfSpeech ?? null, entry.exampleSentence ?? null, entry.rank ?? 0);
-    }
-  })();
-}
+db.transaction(() => {
+  for (const entry of entries) {
+    const normalized = entry.term.trim().toLowerCase();
+    // core is one-sense-per-term, so rank is pinned to 0 and the unique index
+    // silently drops any duplicate term the source file still carries.
+    const rank = mode === "core" ? 0 : (entry.rank ?? 0);
+    insert.run(normalized, entry.definition, entry.partOfSpeech ?? null, entry.exampleSentence ?? null, mode, rank);
+  }
+})();
 
 db.close();
 console.log(`Wrote ${entries.length} ${mode} entries to ${outputPath}`);

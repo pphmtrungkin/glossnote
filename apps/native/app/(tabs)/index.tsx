@@ -1,6 +1,8 @@
+import type { AppRouter } from "@better-vocab/api/routers/index";
 import { Ionicons } from "@expo/vector-icons";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { inferRouterOutputs } from "@trpc/server";
 import { Link } from "expo-router";
 import {
   Button,
@@ -16,10 +18,11 @@ import {
   useToast,
 } from "heroui-native";
 import { useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+import { Alert, Image, Pressable, Text, View } from "react-native";
 import z from "zod";
 
 import { Container } from "@/components/container";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
   FOLDER_STATUSES,
   FOLDER_STATUS_COLORS,
@@ -27,6 +30,10 @@ import {
   type FolderStatus,
 } from "@/lib/folder-status";
 import { trpc } from "@/utils/trpc";
+
+// One result from Hardcover, shaped by book.search. `folder.create` takes this
+// object straight back and upserts it — the client never handles a book id.
+type BookHit = inferRouterOutputs<AppRouter>["book"]["search"][number];
 
 const folderSchema = z.object({
   title: z.string().trim().min(1, "Give the folder a title"),
@@ -39,7 +46,23 @@ export default function ShelfScreen() {
   const mutedColor = useThemeColor("muted");
   const [isFormOpen, setIsFormOpen] = useState(false);
 
+  // The Hardcover hit the user picked, held until submit. Null means a
+  // freeform folder — either they skipped search, or they're offline and typed
+  // a title by hand, which UserFlow §2 requires to keep working.
+  const [pickedBook, setPickedBook] = useState<BookHit | null>(null);
+  const [bookQuery, setBookQuery] = useState("");
+  const debouncedBookQuery = useDebouncedValue(bookQuery);
+
   const folders = useQuery(trpc.folder.list.queryOptions());
+
+  // Debounced and gated on a picked book: Hardcover's free tier allows 60
+  // requests a minute with a burst of 10, so a request per keystroke would
+  // burn the budget on one search.
+  const bookResults = useQuery({
+    ...trpc.book.search.queryOptions({ query: debouncedBookQuery.trim() }),
+    enabled: !pickedBook && debouncedBookQuery.trim().length >= 2,
+    retry: false,
+  });
 
   function invalidateFolders() {
     return queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() });
@@ -63,11 +86,27 @@ export default function ShelfScreen() {
     defaultValues: { title: "", status: "reading" as FolderStatus },
     validators: { onSubmit: folderSchema },
     onSubmit: async ({ value, formApi }) => {
-      await createFolder.mutateAsync({ title: value.title.trim(), status: value.status });
+      await createFolder.mutateAsync({
+        title: value.title.trim(),
+        status: value.status,
+        book: pickedBook ?? undefined,
+      });
       formApi.reset();
-      setIsFormOpen(false);
+      closeForm();
     },
   });
+
+  function closeForm() {
+    setIsFormOpen(false);
+    setPickedBook(null);
+    setBookQuery("");
+  }
+
+  function pickBook(hit: BookHit) {
+    setPickedBook(hit);
+    form.setFieldValue("title", hit.title);
+    setBookQuery("");
+  }
 
   function confirmDelete(id: string, title: string) {
     Alert.alert("Delete folder?", `"${title}" and every word in it will be removed.`, [
@@ -80,7 +119,11 @@ export default function ShelfScreen() {
     <Container className="px-6 pb-8">
       <View className="flex-row items-center justify-between py-4">
         <Text className="text-2xl font-serif-bold text-foreground">Your shelf</Text>
-        <Button size="sm" variant={isFormOpen ? "tertiary" : "primary"} onPress={() => setIsFormOpen((open) => !open)}>
+        <Button
+          size="sm"
+          variant={isFormOpen ? "tertiary" : "primary"}
+          onPress={() => (isFormOpen ? closeForm() : setIsFormOpen(true))}
+        >
           <Button.Label>{isFormOpen ? "Cancel" : "New folder"}</Button.Label>
         </Button>
       </View>
@@ -88,6 +131,80 @@ export default function ShelfScreen() {
       {isFormOpen && (
         <Surface variant="secondary" className="p-4 rounded-lg mb-4">
           <Text className="text-foreground font-medium mb-4">New folder</Text>
+
+          {pickedBook ? (
+            <Surface variant="secondary" className="flex-row items-center gap-3 mb-3 p-2 rounded-md">
+              {pickedBook.coverImageUrl ? (
+                <Image source={{ uri: pickedBook.coverImageUrl }} className="w-10 h-14 rounded" resizeMode="cover" />
+              ) : (
+                <View className="w-10 h-14 rounded items-center justify-center bg-surface-2">
+                  <Ionicons name="book-outline" size={18} color={mutedColor} />
+                </View>
+              )}
+              <View className="flex-1">
+                <Text className="text-foreground text-sm font-medium" numberOfLines={1}>
+                  {pickedBook.title}
+                </Text>
+                <Text className="text-muted text-xs" numberOfLines={1}>
+                  {pickedBook.authors.join(", ") || "Unknown author"}
+                </Text>
+              </View>
+              <Button size="sm" variant="tertiary" onPress={() => setPickedBook(null)}>
+                <Button.Label>Change</Button.Label>
+              </Button>
+            </Surface>
+          ) : (
+            <View className="mb-3">
+              <TextField>
+                <Label>Find the book</Label>
+                <Input
+                  value={bookQuery}
+                  onChangeText={setBookQuery}
+                  placeholder="Search Hardcover, or skip for a freeform folder"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+              </TextField>
+
+              {bookResults.isFetching && (
+                <View className="py-3 items-center">
+                  <Spinner size="sm" />
+                </View>
+              )}
+
+              {/* Search needs connectivity; typing a title below always works,
+                  which is the offline fallback UserFlow §2 asks for. */}
+              {bookResults.error && (
+                <Text className="text-muted text-xs mt-2">
+                  {bookResults.error.message} You can still type a title below.
+                </Text>
+              )}
+
+              {bookResults.data?.map((hit) => (
+                <Pressable key={hit.externalId} onPress={() => pickBook(hit)} className="flex-row items-center gap-3 py-2">
+                  {hit.coverImageUrl ? (
+                    <Image source={{ uri: hit.coverImageUrl }} className="w-8 h-12 rounded" resizeMode="cover" />
+                  ) : (
+                    <View className="w-8 h-12 rounded items-center justify-center bg-surface-2">
+                      <Ionicons name="book-outline" size={14} color={mutedColor} />
+                    </View>
+                  )}
+                  <View className="flex-1">
+                    <Text className="text-foreground text-sm" numberOfLines={1}>
+                      {hit.title}
+                    </Text>
+                    <Text className="text-muted text-xs" numberOfLines={1}>
+                      {[hit.authors.join(", "), hit.releaseYear].filter(Boolean).join(" · ")}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+
+              {bookResults.data?.length === 0 && (
+                <Text className="text-muted text-xs mt-2">No matches. Type a title below instead.</Text>
+              )}
+            </View>
+          )}
 
           <form.Subscribe selector={(state) => state.isSubmitting}>
             {(isSubmitting) => (

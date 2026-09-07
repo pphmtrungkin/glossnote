@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: What Lexishelf is and how this documentation is organized
+description: What GlossNote is and how this documentation is organized
 ---
 
-Lexishelf is a vocabulary-capture app for readers: while you're reading a book, you log the words you don't know, and the app gives you a definition — offline if you're mid-flight with no signal, richer (AI-enhanced, with an example sentence) once you're back online. Words are organized into per-book folders, and the app's distinguishing feature is **crowdsourced discovery** — seeing which words *other* readers of the same book also had to look up.
+GlossNote is a vocabulary-capture app for readers: while you're reading a book, you log the words you don't know, and the app gives you a definition — offline if you're mid-flight with no signal, richer (AI-enhanced, with an example sentence) once you're back online. Words are organized into per-book folders, and the app's distinguishing feature is **crowdsourced discovery** — seeing which words *other* readers of the same book also had to look up.
 
 This docs site tracks the actual implementation, not the aspirational product spec — every page says explicitly what's built versus what's still a design decision on paper. If a section here gets out of sync with the code, trust the code and file an issue against the docs.
 
@@ -14,7 +14,7 @@ This docs site tracks the actual implementation, not the aspirational product sp
   <Card title="API layer" description="How tRPC is wired up, and what the folder/word routers actually do" href="/docs/api-layer" />
   <Card title="Authentication" description="Better Auth configuration and how a session reaches a procedure" href="/docs/authentication" />
   <Card title="Offline dictionary" description="The on-device SQLite dictionary and the WordNet build pipeline" href="/docs/offline-dictionary" />
-  <Card title="Book search" description="The planned Hardcover GraphQL integration" href="/docs/book-search" />
+  <Card title="Book search" description="The Hardcover GraphQL integration behind folder creation" href="/docs/book-search" />
   <Card title="Implementation status" description="What's built vs. still a gap, tracked against the user-flow spec" href="/docs/implementation-status" />
 </Cards>
 
@@ -40,7 +40,7 @@ apps/
   native/    Expo Router mobile app
   fumadocs/  this docs site (Next.js)
 packages/
-  api/       tRPC router + context — the actual business logic
+  api/       tRPC router + context — the actual business logic (plus src/smoke.ts)
   auth/      Better Auth config
   db/        Drizzle schema + Postgres client
   env/       typed env vars (@t3-oss/env-core), split server/native

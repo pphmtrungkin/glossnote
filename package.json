@@ -1,5 +1,5 @@
 {
-  "name": "better-vocab",
+  "name": "glossnote",
   "private": true,
   "workspaces": {
     "packages": [
@@ -24,10 +24,14 @@
     "check-types": "turbo run check-types",
     "dev:native": "turbo run dev -F native --",
     "dev:server": "turbo run dev -F server --",
+    "db:start": "cd packages/db && docker compose up -d --wait",
+    "db:stop": "cd packages/db && docker compose down",
     "db:push": "turbo run db:push -F @better-vocab/db --",
     "db:studio": "turbo run db:studio -F @better-vocab/db --",
     "db:generate": "turbo run db:generate -F @better-vocab/db --",
-    "db:migrate": "turbo run db:migrate -F @better-vocab/db --"
+    "db:migrate": "turbo run db:migrate -F @better-vocab/db --",
+    "db:seed": "turbo run db:seed -F @better-vocab/db --",
+    "db:smoke": "bun --env-file=apps/server/.env packages/api/src/smoke.ts"
   },
   "dependencies": {
     "@better-vocab/env": "workspace:*",

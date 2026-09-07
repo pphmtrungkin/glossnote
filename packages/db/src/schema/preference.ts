@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { offlineDictionaryTierEnum } from "./enums";
@@ -19,35 +19,11 @@ export const userPreference = pgTable("user_preference", {
     .notNull(),
 });
 
-export const pushToken = pgTable(
-  "push_token",
-  {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    token: text("token").notNull(),
-    platform: text("platform").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => [
-    uniqueIndex("push_token_token_uidx").on(table.token),
-    index("push_token_userId_idx").on(table.userId),
-  ],
-);
-
 export const userPreferenceRelations = relations(userPreference, ({ one }) => ({
   user: one(user, { fields: [userPreference.userId], references: [user.id] }),
-}));
-
-export const pushTokenRelations = relations(pushToken, ({ one }) => ({
-  user: one(user, { fields: [pushToken.userId], references: [user.id] }),
 }));
 
 export const userPreferenceUserRelations = relations(user, ({ one }) => ({
   preference: one(userPreference, { fields: [user.id], references: [userPreference.userId] }),
 }));
 
-export const userPushTokenRelations = relations(user, ({ many }) => ({
-  pushTokens: many(pushToken),
-}));

@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { folderStatusEnum } from "./enums";
@@ -17,8 +17,6 @@ export const book = pgTable(
     authors: text("authors").array().notNull().default([]),
     coverImageUrl: text("cover_image_url"),
     description: text("description"),
-    topics: text("topics").array().notNull().default([]),
-    raw: jsonb("raw"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -47,7 +45,18 @@ export const folder = pgTable(
       .$onUpdate(() => new Date())
       .notNull(),
   },
-  (table) => [index("folder_userId_idx").on(table.userId), index("folder_bookId_idx").on(table.bookId)],
+  (table) => [
+    index("folder_userId_idx").on(table.userId),
+    index("folder_bookId_idx").on(table.bookId),
+    // SoftwareSpec §4.1: unique(user_id, book_id) where book_id is not null.
+    // Partial by necessity — a user may hold many freeform folders, which all
+    // carry bookId null, and in Postgres nulls never collide in a plain unique
+    // index anyway. Stated explicitly so the intent survives a future edit:
+    // one folder per book per user, unlimited freeform folders.
+    uniqueIndex("folder_userId_bookId_uidx")
+      .on(table.userId, table.bookId)
+      .where(sql`${table.bookId} is not null`),
+  ],
 );
 
 export const bookRelations = relations(book, ({ many }) => ({
