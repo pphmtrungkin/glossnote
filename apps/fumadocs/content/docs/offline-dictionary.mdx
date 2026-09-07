@@ -31,11 +31,31 @@ Defined in `apps/native/lib/local-db.ts`, created via a migration that runs thro
 
 Three payoffs. Lookup is a single indexed `SELECT` instead of three sequential queries. Dropping the extended pack becomes a `DELETE WHERE source = 'extended'` rather than a `DROP TABLE`. And `dictionary_term_source_rank_uidx`, unique on `(term, source, rank)`, both backs the lookup and makes re-merging a downloaded pack idempotent.
 
-That last table is worth pausing on: `pending_sync` only exists on the device, never on the server. There's no equivalent "sync queue" table in Postgres, and that's intentional — the server never needs to know that a queue exists at all, it only ever sees the final `word.create` calls once they actually arrive. Keeping sync state purely client-side avoids having to reconcile two separate ideas of "what's pending" across two databases.
+That last table is worth pausing on: `pending_sync` only exists on the device, never on the server. There's no equivalent "sync queue" table in Postgres, and that's intentional — the server never needs to know that a queue exists at all, it only ever sees the captures once they actually arrive. Keeping sync state purely client-side avoids having to reconcile two separate ideas of "what's pending" across two databases.
 
-## Lookup order
+The endpoint they flush *to* now exists: `word.createMany` takes a batch and reports the outcome of each capture separately, so one dead folder can't wedge the queue ([API layer](/docs/api-layer#wordcreatemany--draining-the-offline-queue)). Nothing on the device writes to `pending_sync` or calls it yet.
 
-`apps/native/hooks/use-dictionary-lookup.ts` is what a screen calls when the user types or speaks a word. One query, ordered by tier:
+## One resolver
+
+`useDefinition` (`apps/native/hooks/use-definition.ts`) is what a screen calls when the user types or speaks a word — and it is the *only* thing a screen calls. Device tiers first, the server second, and the answer written back for next time, all behind one call.
+
+That used to be three separate decisions: the SQL that ranked the on-device tiers, the Add Word screen that chose between device and server, and `dictionary.lookup` choosing between its cache and Datamuse. The screen was the only place that knew about both storage systems, and it reconciled their shapes by hand.
+
+It returns a union rather than a value, so a screen renders a state instead of inferring one:
+
+| Result | Meaning |
+| --- | --- |
+| `found` | A definition, plus `fromNetwork` — which is what the "Found online" / "Found in your offline dictionary" line keys off |
+| `missing` | Asked everywhere available; genuinely not a word we know |
+| `unreachable` | Not on the device, and the server couldn't be reached to ask |
+
+`missing` and `unreachable` are worth keeping apart: one means "type your own definition, this is a name or an invented word", the other means "you're offline, try again later". They look identical if you only check for the absence of a definition.
+
+Reads and writes live in `apps/native/lib/dictionary.ts`; no screen touches SQL.
+
+### Lookup order
+
+One query, ordered by tier:
 
 ```sql
 SELECT definition, part_of_speech, example_sentence, source
@@ -46,6 +66,10 @@ SELECT definition, part_of_speech, example_sentence, source
 ```
 
 `cached` outranks `core` deliberately. The old three-table fallthrough checked the bundled dictionary *first*, which meant a definition already resolved online — richer, possibly AI-enhanced — lost to whatever WordNet gloss shipped in the binary. Collapsing the tables made the priority a single `ORDER BY` clause, and fixed it in passing.
+
+<Callout type="warn">
+For a while that top priority was unreachable: nothing ever wrote a row with `source = 'cached'`. An online result was displayed and thrown away, so the same word cost another round trip every time. `cacheDefinition` now writes it back on every server-resolved hit — see the [changelog](/docs/changelog).
+</Callout>
 
 Within `extended`, only the top-ranked sense (`rank` 0, the most frequent) is surfaced — matching the "definition displayed instantly, user confirms" flow. The other senses stay in the table, queryable later if a "see other meanings" screen ever gets built.
 
@@ -73,6 +97,16 @@ The resulting `dictionary-core.db` gets wired into `SQLiteProvider`'s `assetSour
 <Callout type="warn">
 This pipeline exists as working code, but hasn't been run for real yet — no `.db` files exist in the repo, and `assetSource` isn't wired up in `_layout.tsx` until one does. See [Implementation status](/docs/implementation-status).
 </Callout>
+
+## When the device has no answer
+
+The bundled pack holds single English words only, so a phrase, a name, or a rare word will miss. `useDefinition` then calls `dictionary.lookup` on the server, which asks Datamuse and caches the result for every other user ([API layer](/docs/api-layer#the-dictionary-router)) — and writes it into this device's `cached` tier on the way back, so the *next* lookup of that word needs no signal at all.
+
+The order matters and is deliberate: **the device looks first, the network second.** Common words never reach the network at all. A measured lookup of "ephemeral" took 590 ms the first time and 4 ms once cached; a bundled hit takes neither.
+
+Suggestion rows are the exception, and they opt out explicitly with `useDefinition(term, { online: false })`. A list resolving one term per row would otherwise fire a request per visible row to fill in text the reader hasn't asked for.
+
+If both miss, that is a real answer rather than a failure. Words invented for a novel exist in no dictionary, and the screen says so.
 
 ## Still undecided
 

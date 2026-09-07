@@ -5,6 +5,8 @@ description: The Hardcover GraphQL integration behind folder creation
 
 Creating a folder starts by finding the book. `book.search` proxies [Hardcover](https://docs.hardcover.app)'s GraphQL API, and the result the user picks is upserted into our own `book` table by `folder.create` — one round trip, no separate "create book" step.
 
+This is what makes crowdsourced discovery possible at all: two readers of the same book only end up pointing at the same `book.id` because both picked the same Hardcover result. Without it, `word.suggestions` has nothing to group by.
+
 ## Why this has to be server-side
 
 Hardcover's own documentation settles it: *"Queries are not allowed to run in the browser, they must be run in an environment where the token can be kept secure."* A token shipped inside the Expo bundle is extractable from the app binary, and the whole app shares one account's quota — one misbehaving client could exhaust it for everyone.

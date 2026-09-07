@@ -26,7 +26,9 @@ export const appRouter = router({
   healthCheck: publicProcedure.query(() => "OK"),
   privateData: protectedProcedure.query(({ ctx }) => ({ user: ctx.session.user })),
   book: bookRouter,
+  dictionary: dictionaryRouter,
   folder: folderRouter,
+  preference: preferenceRouter,
   word: wordRouter,
 });
 ```
@@ -36,6 +38,28 @@ export const appRouter = router({
 `packages/api/src/routers/book.ts` — a single `search` procedure that proxies [Hardcover](https://docs.hardcover.app)'s GraphQL API so the API token never leaves the server. It's a plain `fetch` rather than a GraphQL client: one query, one POST body, and the response is an untyped JSON scalar anyway.
 
 The mapping from Hardcover's Typesense payload to our `book` shape is exported separately as `mapSearchResults`. That split is deliberate — the fetch is glue, but the mapping is the part that breaks when Hardcover reshapes their search index, and pulling it out means it can be asserted against a fixture without a token or a rate-limited round trip. See [Book search](/docs/book-search) for the full integration.
+
+## The `dictionary` router
+
+`packages/api/src/routers/dictionary.ts` — one `lookup` procedure, and the **only** code allowed to write `dictionaryEntry`.
+
+1. Check `dictionaryEntry` for the normalized term. If present, return it — this is what keeps both the API quota and future AI cost flat, since every later reader of that term is free.
+2. On a miss, ask [Datamuse](https://www.datamuse.com/api/) (`?sp=<term>&md=d&max=5`). No API key is required before 1 January 2027; after that a free key allows 100,000 requests per day. Datamuse asks that apps acknowledge it in their documentation — this page is that acknowledgement, and their definitions come from Wiktionary and WordNet.
+3. Save the result and return it.
+
+### The exact-word check is the point, not a detail
+
+Datamuse's `sp` parameter means "spelled like", and it is **fuzzy**. Asking for a word that does not exist returns a *different* word rather than an empty list. Asking for `sietch` really does return `sketch`:
+
+```json
+[{ "word": "sketch", "score": 15046, "defs": ["n\tA rapidly executed freehand drawing. "] }]
+```
+
+Accepting that would file the definition of "sketch" under the user's word "sietch" — silently, permanently, and in a table other readers share. So `pickDefinition` requires `hit.word` to equal the term before using anything, and `db:smoke` asserts it with that exact payload.
+
+A miss returns `null`, not an error. Words invented for a novel are a normal case for a reading app: `gom jabbar` is in no dictionary, and the screen says so plainly instead of showing a failure.
+
+The same fuzzy behaviour is worth keeping in mind for later — it is a ready-made "did you mean…?" for voice mishears, from the same endpoint.
 
 ## The `folder` router
 
@@ -48,15 +72,41 @@ The mapping from Hardcover's Typesense payload to our `book` shape is exported s
 | `updateStatus` | Change `reading` / `finished` / `misc` |
 | `delete` | Remove a folder |
 
-Notice there's no separate "check this folder belongs to the caller" step before `updateStatus` or `delete` — ownership is baked directly into the `WHERE` clause instead:
+Notice there's no separate "check this folder belongs to the caller" step before `updateStatus` or `delete` — ownership is baked into the `WHERE` clause instead, via one shared predicate in `packages/api/src/ownership.ts`:
 
 ```ts
-.where(and(eq(folder.id, input.id), eq(folder.userId, ctx.session.user.id)))
+.where(ownedBy(folder, input.id, ctx.session.user.id))   // and(eq(id), eq(userId))
+.returning();
+return assertOwned(updated, "Folder");
 ```
 
-If the folder exists but belongs to someone else, this simply matches zero rows — the mutation silently affects nothing, and the code throws `NOT_FOUND` because nothing came back. One line does both the security check and the update.
+If the folder exists but belongs to someone else, this matches zero rows, `.returning()` comes back empty, and `assertOwned` throws `NOT_FOUND`. One predicate does both the security check and the update.
+
+`NOT_FOUND` rather than `FORBIDDEN` is deliberate: a caller has no business learning that a row exists but belongs to someone else. Both cases look identical from outside.
+
+<Callout type="warn">
+This used to be six hand-written copies of that predicate in three different shapes, and two of them — both `delete` procedures — returned `{ id }` without ever checking whether a row matched. Deleting another user's word reported success. See the [changelog](/docs/changelog); the fix is a behaviour change for callers that relied on delete being a silent no-op.
+</Callout>
 
 `create` is the one procedure doing more than an insert. It takes the *picked search result* rather than a `bookId` — a client-supplied foreign key is unvalidated input — upserts the `book` row on `(provider, external_id)`, then inserts the folder pointing at it. It also translates the partial unique index on `(user_id, book_id)` into a readable `CONFLICT` instead of letting a raw Postgres `23505` reach the client. Both are covered in [Book search](/docs/book-search).
+
+## The `preference` router
+
+`packages/api/src/routers/preference.ts` — the reader's own settings, and the writer `user_preference` spent three migrations without.
+
+| Procedure | What it does |
+| --- | --- |
+| `get` | The caller's row, or `PREFERENCE_DEFAULTS` if they have none. Never writes. |
+| `update` | Upsert; every field is optional |
+
+The column existed and `word.create` read it, but nothing could set it — so the aggregate opt-out the [data model](/docs/data-model) promises was, in practice, unreachable.
+
+Two details worth knowing:
+
+- **`get` never writes.** A user who has never opened Settings has no row, and gets the same defaults the column would have applied. That means a settings screen renders on first launch without a write, and `PREFERENCE_DEFAULTS` lives in `@better-vocab/domain` so the router and the Postgres column default cannot disagree about what "default" means.
+- **`update` is field-by-field.** A toggle sends only what it changed rather than echoing the whole screen back, which avoids one device clobbering a setting another just changed. `updatedAt` is always in the `SET` clause — it keeps the timestamp honest on the conflict path, since Drizzle's `$onUpdate` only fires for a plain `UPDATE`, and it means the clause is never empty when a caller sends nothing.
+
+No settings screen calls these yet.
 
 ## The `word` router
 
@@ -66,27 +116,72 @@ If the folder exists but belongs to someone else, this simply matches zero rows 
 | --- | --- |
 | `listByFolder` | Words in one folder, with the resolved `dictionaryEntry` attached |
 | `search` | Search the caller's words across *every* folder — the server-side counterpart to the on-device SQLite search used when offline |
-| `create` | Log a word — covers both the offline-sync-flush case and the immediate online-save case |
+| `create` | Log one word, the moment the reader taps Save |
+| `createMany` | Drain the device's offline queue in one round trip — see below |
+| `suggestions` | Words other readers of this book saved that the caller doesn't have yet — counts only, no definitions |
 | `update` | Edit a personal definition override, or toggle `mastered` |
 | `delete` | Remove a word |
 
-Walking through `create`, because it's doing more than it looks like at first glance:
+`create` and `createMany` both delegate to one private `captureWord`, so the rules below — especially "a client never writes `dictionary_entry`" — cannot hold for the live save and quietly lapse for the offline flush. Walking through it, because it's doing more than it looks like at first glance:
 
 1. **Confirm the folder belongs to the caller**, and — while already fetching that row anyway — grab its `bookId`. This is then copied onto the new `word` row (`word.bookId` is a deliberate denormalization; see [data model](/docs/data-model) for why).
-2. **If a definition was provided** (the online path), resolve-or-create a row in the shared `dictionaryEntry` cache, keyed by the normalized term — carrying any example sentence onto that shared row rather than onto the word. `.onConflictDoNothing({ target: dictionaryEntry.term })` handles the case where two requests try to create the same brand-new term at the same moment — instead of one of them crashing with a unique-constraint error, the loser just re-reads the winner's row.
+2. **If a definition was provided**, store it on `word.definitionOverride` — this user's row only. It is deliberately *not* written to the shared `dictionaryEntry` cache, which only a server-side resolver may write. See [Data model](/docs/data-model) for why that rule exists.
 3. **Look up the caller's preferences** to snapshot their current aggregate-opt-in setting onto this specific word (again: a snapshot, not a live reference — see the data model page for why that distinction matters).
 4. **Insert the word**, with the same `onConflictDoNothing` pattern on `(folderId, normalizedTerm)` — if this exact word already exists in this folder, nothing new is inserted, and the existing row is returned instead. This is what makes "tap a crowdsourced word to add it to your folder" safe to tap twice.
+
+### `word.createMany` — draining the offline queue
+
+`pending_sync` (see [Offline dictionary](/docs/offline-dictionary)) collects captures made with no signal. `createMany` is where they land: up to 100 at a time, one round trip.
+
+The part that matters is the return shape. It reports **per capture**, not one verdict for the batch:
+
+| Status | Meaning | What the device does |
+| --- | --- | --- |
+| `saved` | Written, or already present | Delete the queued row |
+| `dropped` | Permanently un-writable — the folder was deleted on another device | Delete it too; retrying will never succeed |
+| *(thrown error)* | Transient — lost connection, database fault | Keep the queue, try again later |
+
+Partial success is the whole point. A folder deleted on another device must not strand every other queued word behind it, and a queue that can never drain is worse than one that drops a row and says so. The device's own `localId` is echoed back untouched — it means nothing on the server and is never stored, it just lets the app match results to queued rows.
+
+Because `captureWord` uses the same `onConflictDoNothing` on `(folderId, normalizedTerm)` as the single-word path, resending a whole queue after a crash mid-flush is safe: already-written captures come back as `saved` with the existing row's id rather than erroring or duplicating.
+
+Ownership is resolved once per distinct folder and the preference read once for the batch — neither is per word.
+
+<Callout type="info">
+The device half doesn't exist yet: nothing writes a `pending_sync` row when a capture happens offline, and nothing calls `createMany` on reconnect. Wiring it needs connectivity detection and a flush trigger in `apps/native`. See [Implementation status](/docs/implementation-status).
+</Callout>
 
 ## The native client
 
 `apps/native/utils/trpc.ts` is where the mobile app turns `AppRouter`'s *type* into something callable. Two pieces work together:
 
 ```ts
-const trpcClient = createTRPCClient<AppRouter>({
+export const trpcClient = createTRPCClient<AppRouter>({
   links: [httpBatchLink({ url: `${env.EXPO_PUBLIC_SERVER_URL}/trpc`, ... })],
 });
 
 export const trpc = createTRPCOptionsProxy<AppRouter>({ client: trpcClient, queryClient });
 ```
 
+### `word.suggestions`
+
+The one procedure that reads across users. It answers "words other readers of this book looked up, that you don't have yet":
+
+```sql
+SELECT min(term) AS term, normalized_term, count(DISTINCT user_id)::int AS readers
+FROM word
+WHERE book_id = $1 AND contributes_to_aggregate
+  AND user_id <> $me
+  AND normalized_term NOT IN (SELECT normalized_term FROM word WHERE folder_id = $myFolder)
+GROUP BY normalized_term
+ORDER BY readers DESC
+LIMIT 20;
+```
+
+Three things it deliberately does not return: your own captures, anything already in your folder, and **any definition text**. The app resolves each suggested term against its own local dictionary, exactly as it does for a word the user typed. That also makes spoiler-safety structural rather than a query convention — there is no column in the result that could carry a context sentence or a personal note.
+
+Freeform folders have no book, so there is no population to compare against; the procedure returns an empty list rather than an error.
+
 `createTRPCOptionsProxy` is what lets a screen call `trpc.word.listByFolder.queryOptions({ folderId })` and hand that straight to a React Query hook (`useQuery`, `useMutation`) — you get tRPC's type safety and React Query's caching/loading-state handling at the same time, instead of picking one.
+
+`trpcClient` is exported alongside it for the one case the proxy doesn't fit: calling a procedure *inside* a `queryFn`. The definition resolver does exactly that — it reads the device's SQLite dictionary first and only then, on a miss, calls `dictionary.lookup` — so the whole resolution is one query with one cache entry rather than two the screen has to merge. See [Offline dictionary](/docs/offline-dictionary#one-resolver).

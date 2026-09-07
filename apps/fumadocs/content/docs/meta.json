@@ -7,6 +7,7 @@
     "authentication",
     "book-search",
     "offline-dictionary",
-    "implementation-status"
+    "implementation-status",
+    "changelog"
   ]
 }

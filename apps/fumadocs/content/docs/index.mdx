@@ -16,6 +16,7 @@ This docs site tracks the actual implementation, not the aspirational product sp
   <Card title="Offline dictionary" description="The on-device SQLite dictionary and the WordNet build pipeline" href="/docs/offline-dictionary" />
   <Card title="Book search" description="The Hardcover GraphQL integration behind folder creation" href="/docs/book-search" />
   <Card title="Implementation status" description="What's built vs. still a gap, tracked against the user-flow spec" href="/docs/implementation-status" />
+  <Card title="Changelog" description="What changed, when, and why — including anything that breaks an existing caller" href="/docs/changelog" />
 </Cards>
 
 ## Stack at a glance
@@ -43,10 +44,13 @@ packages/
   api/       tRPC router + context — the actual business logic (plus src/smoke.ts)
   auth/      Better Auth config
   db/        Drizzle schema + Postgres client
+  domain/    the match key + shared value sets — no dependencies, imported by both sides
   env/       typed env vars (@t3-oss/env-core), split server/native
   config/    shared tsconfig.base.json
 ```
 
 The pattern to notice: `apps/server` is deliberately thin. It knows how to speak HTTP (via Hono) and hands every request straight to `packages/api`, which knows nothing about HTTP at all. That split is why `apps/native` can share the exact same `AppRouter` type without caring that the transport happens to be Hono underneath — and why, if this ever moved off Hono, only `apps/server` would need to change.
 
-Type-safety flows in one direction across the whole stack: `packages/db` schema → `packages/auth` (Drizzle adapter typed against it) → `packages/api` (`Context`/`AppRouter` types) → `apps/native` (imports only the `AppRouter` type for its tRPC client). Nothing is ever hand-typed twice.
+Type-safety flows in one direction across the whole stack: `packages/domain` (the match key and the shared value sets, no dependencies) → `packages/db` schema → `packages/auth` (Drizzle adapter typed against it) → `packages/api` (`Context`/`AppRouter` types) → `apps/native` (the `AppRouter` type for its tRPC client, plus `@better-vocab/domain` at runtime). Nothing is ever hand-typed twice.
+
+`packages/domain` sits at the bottom of that chain for a specific reason: the Expo app cannot import `packages/db` without dragging Postgres drivers into the React Native bundle, so anything both sides must agree on — how a term is normalized before it is matched, what the valid folder statuses are — needs a home neither side owns. See the [changelog](/docs/changelog) for what moved there and why.

@@ -1,0 +1,83 @@
+---
+title: Changelog
+description: What changed, when, and why — newest first
+---
+
+Notable changes to the codebase, newest first. This tracks *decisions and their reasons*, not every commit — for the full list, read `git log`. Anything marked **Breaking** changes behaviour an existing caller depends on.
+
+## Unreleased
+
+### Shared domain package, one definition resolver, one ownership rule
+
+An architecture review turned up the same logic written in several places, each copy free to drift from the others. All of it now has a single home.
+
+**`@better-vocab/domain` — a new dependency-free package.** It exists because `apps/native` cannot import `packages/db`: that would pull Postgres drivers into the React Native bundle. Anything the server and the app must agree on lives here instead of being retyped on both sides. `packages/db` builds its `pgEnum`s from these arrays, `packages/api` builds its `z.enum`s from them, and the Expo app reads them directly.
+
+- **`normalizeTerm`** — the match key. Every join between a captured word and a definition matches on this: the shared `dictionary_entry` table, the on-device `dictionary` table, and the crowdsourced aggregate's `GROUP BY`. It had been written out as `term.trim().toLowerCase()` at four call sites across three packages, with the rule itself recorded only in a schema comment.
+
+  One of those four was `scripts/build-dictionary-db.ts`, which stamps the bundled dictionary at build time. Had it ever normalized differently from the runtime lookups, every offline lookup would have missed — with no error, no crash, and nothing in the repo that would have caught it. That is the reason this is a module rather than a convention.
+
+- **Closed value sets** — `FOLDER_STATUSES`, `CAPTURE_METHODS`, `DICTIONARY_TIERS`, `OFFLINE_DICTIONARY_TIERS`, `DICTIONARY_SOURCES`. `folder_status` alone had been declared three times: a `pgEnum`, a `z.enum`, and an `as const` array in the app.
+
+- **`PREFERENCE_DEFAULTS`** — applied by `packages/db` as the column defaults *and* returned by `preference.get` for a user with no row, so "the default" is one value rather than one per reader of it.
+
+`dictionary_source` and `DICTIONARY_TIERS` were deliberately **not** merged, despite `bundled` and `core` looking like duplicates. They sit on different axes: one is the provenance of a shared server row, the other is which on-device tier holds a copy. The same row can be `bundled` provenance and `cached` tier on the same phone.
+
+**One definition resolver.** `useDefinition` (`apps/native/hooks/use-definition.ts`) is now the only answer to "get me a definition for this term" — device tiers first, `dictionary.lookup` second, result written back to the `cached` tier. Three separate decisions used to answer that question: the SQL that ranked the on-device tiers, the Add Word screen that chose between device and server, and the server procedure that chose between its cache and Datamuse.
+
+It returns a `found` / `missing` / `unreachable` union, so a screen renders a state instead of merging two query results by hand. `apps/native/lib/dictionary.ts` owns the reads and writes; screens no longer touch SQL.
+
+**Fixed: nothing wrote the `cached` tier.** The lookup query ranked `cached` highest, but no code ever inserted a row with that source — an online result was displayed and thrown away. `cacheDefinition` now writes it back, so the second lookup of a word works on a plane. The tier's top priority had been unreachable since it was introduced.
+
+**One ownership rule.** `ownedBy` + `assertOwned` (`packages/api/src/ownership.ts`) replace six hand-written `(id, userId)` predicates in three shapes.
+
+<Callout type="warn">
+**Breaking:** `word.delete` and `folder.delete` used to return `{ id }` whether or not a row matched, so deleting a word that belonged to someone else — or one already deleted — reported success. Both now throw `NOT_FOUND`, matching what `update` always did. Deleting the same row twice is no longer a silent no-op.
+</Callout>
+
+Both failures are `NOT_FOUND` rather than `FORBIDDEN`, deliberately: a caller has no business learning that a row exists but belongs to someone else.
+
+**One Postgres connection pool.** `createAuth()` called `createDb()` a second time, so every server process held two pools that shared nothing — one for tRPC, one for Better Auth's adapter. It now takes the connection as a parameter, which also makes the adapter injectable for tests.
+
+### `preference` router
+
+`user_preference` had a schema and a reader but no writer: `word.create` consulted `contributeToAggregateByDefault` to decide whether a capture joins the crowdsourced aggregate, and nothing let a reader change it. The opt-out the [privacy model](/docs/data-model) promises existed only as a column.
+
+- `preference.get` — never writes. A user with no row gets `PREFERENCE_DEFAULTS`, so a settings screen can open without a write on first launch.
+- `preference.update` — upserts field by field, so a toggle sends only what it changed rather than echoing back the rest of the screen. `updatedAt` is always in the `SET` clause, which keeps the timestamp honest on the conflict path (`$onUpdate` only fires for a plain `UPDATE`) and means the clause is never empty.
+
+No settings screen calls these yet.
+
+### `word.createMany` — the offline flush endpoint
+
+`pending_sync` has been in the on-device schema since the first migration with nothing on either end of it. The server half now exists.
+
+`createMany` takes up to 100 queued captures and returns a result **per capture**, not one verdict for the batch:
+
+| Status | Meaning | What the device does |
+| --- | --- | --- |
+| `saved` | Written, or already present | Delete the queued row |
+| `dropped` | Permanently un-writable — e.g. the folder was deleted on another device | Delete it too; retrying will never succeed |
+| *(thrown error)* | Transient — lost connection, database fault | Keep the queue, try again later |
+
+Partial success is the point: a folder deleted on another device must not strand every other queued word behind it. Ownership is resolved per folder and the preference read once, both outside the loop.
+
+`create` and `createMany` share one private `captureWord`, so the rule that a client never writes `dictionary_entry` cannot hold for the live save and quietly lapse for the flush.
+
+The device half still does not exist — nothing writes a `pending_sync` row when a capture happens offline, and nothing calls `createMany` on reconnect.
+
+### Checks
+
+`db:smoke` grew from 19 assertions to 28. The new ones cover `normalizeTerm` directly, the delete-ownership fix, the preference round trip (including that the opt-out actually reaches a capture rather than merely persisting), and the flush — including that resending a queue after a crash is idempotent.
+
+One new check reads the live `pg_enum` labels back out of Postgres and compares them to the domain arrays. Asserting the `pgEnum`s match the arrays would prove nothing, since they are built from them; asking the database catches the case that actually bites, which is a value added without a generated migration.
+
+## 2026-09-07 — Book search and dictionary lookup
+
+`book.search` proxies [Hardcover](/docs/book-search)'s GraphQL API so the token never leaves the server, and folder creation links the picked result. `dictionary.lookup` resolves definitions through Datamuse and caches them in `dictionary_entry` ([API layer](/docs/api-layer#the-dictionary-router)).
+
+Schema with no producer was deleted rather than kept warm: `book_word_aggregate`, `push_token`, `book.raw`, `book.topics`, `dictionary_entry.audio_url`, `word.example_sentence`, and the FTS5 index in the dictionary build. The bet is that adding a column alongside the feature that reads it is cheaper than maintaining schema for a feature that may never arrive.
+
+## 2026-09-03 — First vertical slice
+
+Shelf, folder detail, and word capture, walkable end to end: sign in, see your shelf, create a folder, log a word into it, browse and search. Kindle-style reading themes and a serif reading font landed alongside it.
