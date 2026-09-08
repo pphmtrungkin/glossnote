@@ -1,6 +1,21 @@
 @import "tailwindcss";
 @import "uniwind";
 @import "heroui-native/styles";
+/*
+ * daisyUI supplies the `autumn` palette below — this is the plugin the values
+ * come from, so regenerating them is a compile rather than a copy-paste:
+ *
+ *   bunx @tailwindcss/cli -i global.css -o /tmp/out.css   # then read [data-theme=autumn]
+ *
+ * Its *component* classes (`btn`, `card`, `badge`) cannot work here and are
+ * not used anywhere in the app: they are CSS rules written against DOM
+ * elements, with pseudo-elements and `:has()`, and React Native has no DOM to
+ * apply them to. What ports cleanly is the theme — a set of colour tokens —
+ * which is what the two blocks below turn into Uniwind styles.
+ */
+@plugin "daisyui" {
+  themes: autumn --default;
+}
 
 /*
  * Kindle-style reading themes.
@@ -18,6 +33,73 @@
  */
 @layer theme {
   :root {
+
+    /*
+     * daisyUI "Autumn" — the app's default page.
+     *
+     * Values are daisyUI's own autumn tokens, converted out of `oklch()`:
+     * React Native's colour parser doesn't accept that function, so an oklch
+     * value reaches a component as an invalid colour rather than an error.
+     * Left column is the daisyUI token each one came from.
+     */
+    @variant autumn {
+      --background: #f1f1f1; /* base-100 */
+      --foreground: #141414; /* base-content */
+
+      --surface: #f1f1f1; /* base-100 */
+      --surface-foreground: var(--foreground);
+      --surface-secondary: #dbdbdb; /* base-200 */
+      --surface-secondary-foreground: var(--foreground);
+      --surface-tertiary: #c5c5c5; /* base-300 */
+      --surface-tertiary-foreground: var(--foreground);
+
+      --overlay: #f1f1f1; /* base-100 */
+      --overlay-foreground: var(--foreground);
+      --backdrop: rgba(20, 20, 20, 0.25);
+
+      --muted: #826a5c; /* neutral */
+
+      --default: #dbdbdb; /* base-200 */
+      --default-foreground: var(--foreground);
+
+      /* daisyUI's `primary` is the one saturated colour a screen is meant to
+         spend once, which is exactly what HeroUI calls the accent. */
+      --accent: #8c0327; /* primary */
+      --accent-foreground: #edd0d0; /* primary-content */
+
+      --field-background: #f1f1f1; /* base-100 */
+      --field-foreground: var(--foreground);
+      --field-placeholder: #826a5c; /* neutral */
+      --field-border: transparent;
+
+      --success: #499380; /* success */
+      --success-foreground: #020806; /* success-content */
+      --warning: #e97f16; /* warning */
+      --warning-foreground: #130600; /* warning-content */
+      --danger: #d40014; /* error */
+      --danger-foreground: #ffd4d1; /* error-content */
+
+      --segment: #f1f1f1; /* base-100 */
+      --segment-foreground: var(--foreground);
+
+      /* Borders follow daisyUI's own elevation scale rather than inventing a
+         greyer grey: base-200 for a border, base-300 for the stronger rule. */
+      --border: #dbdbdb; /* base-200 */
+      --separator: #c5c5c5; /* base-300 */
+      --focus: var(--accent);
+      --link: var(--foreground);
+
+      --surface-shadow:
+        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
+        0 0 1px 0 rgba(0, 0, 0, 0.06);
+      --overlay-shadow:
+        0 2px 8px 0 rgba(0, 0, 0, 0.02), 0 -6px 12px 0 rgba(0, 0, 0, 0.01),
+        0 14px 28px 0 rgba(0, 0, 0, 0.03);
+      --field-shadow:
+        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
+        0 0 1px 0 rgba(0, 0, 0, 0.06);
+    }
+
     /* Kindle "White" — paper, not the stock grey. */
     @variant light {
       --background: #ffffff;
@@ -244,6 +326,39 @@
  * registers under its own family name, so bold text needs `font-serif-bold`
  * rather than `font-serif font-bold`.
  */
+/*
+ * daisyUI's colour names, as Tailwind colours Uniwind can compile: `bg-primary`,
+ * `text-base-content`, `border-base-300` and the rest all work in RN from here.
+ *
+ * Declared in hex rather than the oklch daisyUI ships, for the reason given on
+ * the autumn variant above. They are stated once rather than per theme: these
+ * are brand colours, and a crimson `primary` is meant to stay crimson on the
+ * Sepia page. Anything that should follow the page instead already has a
+ * HeroUI token above — use those for surfaces and body text.
+ */
+@theme {
+  --color-primary: #8c0327;
+  --color-primary-content: #edd0d0;
+  --color-secondary: #d85251;
+  --color-secondary-content: #110202;
+  --color-accent: #d59b6b;
+  --color-accent-content: #100904;
+  --color-neutral: #826a5c;
+  --color-neutral-content: #e5e0dd;
+  --color-base-100: #f1f1f1;
+  --color-base-200: #dbdbdb;
+  --color-base-300: #c5c5c5;
+  --color-base-content: #141414;
+  --color-info: #44adbb;
+  --color-info-content: #020b0d;
+  --color-success: #499380;
+  --color-success-content: #020806;
+  --color-warning: #e97f16;
+  --color-warning-content: #130600;
+  --color-error: #d40014;
+  --color-error-content: #ffd4d1;
+}
+
 @theme {
   --font-serif: "Literata_400Regular";
   --font-serif-medium: "Literata_500Medium";

@@ -7,6 +7,23 @@ Notable changes to the codebase, newest first. This tracks *decisions and their 
 
 ## Unreleased
 
+### daisyUI's autumn palette, as the default page theme
+
+The app opens on [daisyUI](https://daisyui.com)'s `autumn` rather than Kindle's white page. The four Kindle page colours stay, so this is a fifth theme and a new default, not a replacement — see [Theming](/docs/theming).
+
+daisyUI supplies the **palette, and only the palette**. Its component classes (`btn`, `card`, `badge`) are CSS rules written against DOM elements, using pseudo-elements and `:has()`; React Native has no DOM to apply them to, so none are used and adding one would silently do nothing. Its themes are colour tokens, and those port perfectly. The plugin sits in `global.css` so the values are compiled from daisyUI rather than copied out of a blog post and left to rot.
+
+Two things that don't announce themselves, both caught by bundling rather than by typechecking:
+
+- **daisyUI ships `oklch()`, which React Native cannot parse.** An unparseable colour reaches a component as an invalid value, not an error — it renders as nothing. The theme block stores the hex conversion instead, each line carrying the daisyUI token it came from, cross-checked against daisyUI's published autumn colours.
+- **A `DEFAULT_THEME` constant does not make a theme the default.** Uniwind starts on `light` with no config option to change it, and `light` is a theme a reader can legitimately pick — so "current theme is light" and "reader hasn't chosen" are indistinguishable at read time, and a read-side fallback is dead code. The absence of a *stored* value is what now selects the default, applied in the load effect behind the `isThemeReady` gate that already holds the splash.
+
+daisyUI's twenty semantic colour names are also registered as Tailwind colours, so `bg-primary` and `text-base-content` compile to real RN styles. They're declared once rather than per theme — brand colours are meant to stay put across pages, and anything that should follow the page already has a HeroUI token.
+
+<Callout type="info">
+Adding a theme touches three files in step — the `@variant` block, `extraThemes` in `metro.config.js`, and `READING_THEMES` in the theme context — and then needs a Metro restart, because the theme union in `uniwind-types.d.ts` is generated from `extraThemes` and gitignored. A stale one is what makes `Uniwind.setTheme("autumn")` fail to typecheck.
+</Callout>
+
 ### The rest of the server: AI enrichment, notes, reviews, renames, account deletion
 
 Every column and every flow section that had a server-side half missing now has one. What's left in [Implementation status](/docs/implementation-status) is screens, an asset, and two library choices.
@@ -15,7 +32,7 @@ Every column and every flow section that had a server-side half missing now has 
 
 `enrichedAt` is both the marker and the lock: the claim is a conditional update (`SET enriched_at = now() WHERE enriched_at IS NULL`) taken *before* the call, so two readers hitting the same brand-new word buy one enrichment between them rather than one each. That is what makes the spec's cost target — each unique word triggers at most one AI call across the entire user base — true under concurrency rather than only on paper. A failed call releases the claim, so a timeout costs the term nothing worse than staying plain until its next lookup.
 
-The provider sits behind one function, `enrichDefinition` (`packages/api/src/enrich.ts`), with structured output validated against a Zod schema — swapping model or vendor touches that file and nothing else, and never the tRPC contract. A small/fast model tier on purpose: an example sentence is not frontier-reasoning work. `ANTHROPIC_API_KEY` is server-only (the Expo app never talks to a provider) and **optional** — without it, lookups resolve and cache base definitions exactly as before, they simply never gain a sentence. Every failure mode returns the base row, because enrichment is only ever an upgrade on a definition the reader already has; it must not be able to turn a working lookup into a broken screen.
+The provider sits behind one function, `enrichDefinition` (`packages/api/src/enrich.ts`), calling the model through [Vercel AI Gateway](/docs/ai-enrichment#swapping-the-model) with `generateObject` and a Zod schema. The model is one `provider/model` string (`zai/glm-4.7-flashx`, ~$0.06/$0.40 per million tokens), so changing model *or vendor* is that line — no second SDK, account, or key, and never the tRPC contract. A small/fast tier on purpose: an example sentence is not frontier-reasoning work, and this runs once per unique word for the whole user base. Cheap models have quirks — this one returns the right fields nested under a key it invented on about half of calls — so the call carries a `repairText` unwrap, asserted in `db:smoke` against captured payloads. `AI_GATEWAY_API_KEY` is server-only (the Expo app never talks to a provider) and **optional** — without it, lookups resolve and cache base definitions exactly as before, they simply never gain a sentence. Every failure mode returns the base row, because enrichment is only ever an upgrade on a definition the reader already has; it must not be able to turn a working lookup into a broken screen.
 
 The prompt requires a neutral invented sentence and forbids referencing a plot, character, or setting. A sentence borrowed from the book a reader is halfway through is a spoiler.
 

@@ -1,0 +1,91 @@
+---
+title: Theming
+description: How page themes work in React Native, and where daisyUI's autumn palette fits
+---
+
+The app ships five page themes. One of them, `autumn`, comes from [daisyUI](https://daisyui.com) and is the default; the other four are Kindle's page colours.
+
+| Theme | Page | Ink | Where it comes from |
+| --- | --- | --- | --- |
+| `autumn` | `#f1f1f1` | `#141414` | daisyUI's autumn palette — **the default** |
+| `light` | `#ffffff` | `#1b1b1b` | Kindle "White" — paper, not the stock grey |
+| `sepia` | `#fbf0d9` | `#4a3b28` | Kindle "Sepia" |
+| `green` | `#dce7d5` | `#263323` | Kindle "Green", the pale mint page on newer Paperwhites |
+| `dark` | `#000000` | `#cccccc` | Kindle "Black" — grey ink, not white, to cut glare |
+
+## One file decides how everything looks
+
+`apps/native/global.css` is the whole system. Each theme is a `@variant` block that sets the custom properties **HeroUI Native** reads — `--background`, `--surface`, `--accent`, `--danger`, and so on. Every component in the library resolves its colours from those, so overriding them re-skins the entire app without touching a single component.
+
+```css
+@layer theme {
+  :root {
+    @variant autumn {
+      --background: #f1f1f1;   /* base-100 */
+      --foreground: #141414;   /* base-content */
+      --accent: #8c0327;       /* primary */
+      /* ...the rest of the token set */
+    }
+  }
+}
+```
+
+Every theme must declare the *same* set of variables. A token missing from one theme resolves to nothing, and the component renders uncoloured rather than falling back — so themes are added by copying the full block, not by overriding a few values.
+
+## Adding a theme touches three files, in step
+
+1. The `@variant` block in `global.css`
+2. `extraThemes` in `metro.config.js` — Uniwind only knows about `light` and `dark` on its own
+3. `READING_THEMES` and `READING_THEME_META` in `contexts/app-theme-context.tsx`
+
+Then **restart Metro**. The theme union in `uniwind-types.d.ts` is generated from `extraThemes` at build time, and that file is gitignored — so a stale one is what makes `Uniwind.setTheme("autumn")` fail to typecheck with `not assignable to '"system" | "light" | "sepia" | "green" | "dark"'`. The fix is a bundle, not an edit.
+
+## The default has to be set at runtime
+
+Uniwind starts on `light` and has no config option for a different default. Worse, `light` is a theme a reader can legitimately choose, so "the current theme is light" and "the reader hasn't chosen a theme" are indistinguishable at read time. A `DEFAULT_THEME` constant used as a read-side fallback therefore does nothing — the app opens white regardless.
+
+What actually selects the default is the **absence of a stored value**:
+
+```ts
+getAppSetting(db, THEME_SETTING_KEY).then((stored) => {
+  Uniwind.setTheme(isReadingTheme(stored) ? stored : DEFAULT_THEME);
+});
+```
+
+Uniwind holds the active theme in memory only, so this same effect is what replays a saved choice on every cold start (the choice lives in the on-device `app_setting` table — see [Offline dictionary](/docs/offline-dictionary)). `_layout.tsx` holds the splash screen until `isThemeReady`, so the theme lands before the first frame instead of flashing the wrong page colour.
+
+## What daisyUI does and doesn't do here
+
+daisyUI supplies the autumn **palette**. That's the whole of its job in this app, and the boundary is not a stylistic choice:
+
+- **Its component classes cannot work in React Native.** `btn`, `card`, `badge` and the rest are CSS rules written against DOM elements, leaning on pseudo-elements and `:has()`. React Native has no DOM to apply them to. None are used anywhere in the app, and adding one would silently do nothing.
+- **Its themes are just colour tokens**, which port perfectly.
+
+The plugin stays in `global.css` so the values are *compiled from daisyUI* rather than copied out of a blog post and left to rot:
+
+```bash
+cd apps/native && bunx @tailwindcss/cli -i global.css -o /tmp/out.css   # read [data-theme=autumn]
+```
+
+<Callout type="warn">
+daisyUI ships its colours as `oklch()`. React Native's colour parser doesn't accept that function, and an unparseable colour reaches a component as an invalid value rather than an error — so the theme block stores the **hex conversion**, with the daisyUI token each value came from in a trailing comment. Converted values were cross-checked against daisyUI's published autumn colours (`#8c0327`, `#d85251`, `#d59b6b`, `#826a5c`).
+</Callout>
+
+### daisyUI's colour names work as utilities
+
+The same file registers daisyUI's twenty semantic colours as Tailwind colours, so `bg-primary`, `text-base-content`, and `border-base-300` compile to real RN styles.
+
+They're declared **once**, not per theme, because they're brand colours: a crimson `primary` is meant to stay crimson on the Sepia page. Anything that should follow the page instead already has a HeroUI token — use those for surfaces and body text, and keep `primary` for the one element on a screen that earns it.
+
+## Verifying a theme change
+
+Typechecking is not enough: `tsc` reads the generated theme union, and the colours themselves only exist after Uniwind compiles the CSS. Bundle the app and look at what came out:
+
+```bash
+cd apps/native && bunx expo start --port 8099 --clear
+curl -s -o bundle.js "http://localhost:8099/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false"
+grep -c "8c0327" bundle.js      # the palette reached the app
+grep -c "oklch(" bundle.js      # only ever library parser code, never a colour value
+```
+
+That's how the two traps above were caught — a colour that typechecks perfectly and renders as nothing is otherwise invisible until someone opens the screen.

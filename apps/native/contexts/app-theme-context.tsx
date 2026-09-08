@@ -5,17 +5,21 @@ import { Uniwind, useUniwind } from "uniwind";
 import { getAppSetting, setAppSetting } from "@/lib/app-settings";
 
 /**
- * The four Kindle page themes. `light` and `dark` are Uniwind built-ins
- * redefined in global.css; `sepia` and `green` are registered through
+ * The page themes. `autumn` is daisyUI's palette of that name and the default;
+ * the rest are Kindle's page colours. `light` and `dark` are Uniwind built-ins
+ * redefined in global.css; `autumn`, `sepia` and `green` are registered through
  * `extraThemes` in metro.config.js.
+ *
+ * Autumn leads the list so the picker opens on the default rather than
+ * scrolling to it, which also makes it the first stop when cycling.
  */
-export const READING_THEMES = ["light", "sepia", "green", "dark"] as const;
+export const READING_THEMES = ["autumn", "light", "sepia", "green", "dark"] as const;
 
 export type ReadingTheme = (typeof READING_THEMES)[number];
 
 export type ReadingThemeMeta = {
   name: ReadingTheme;
-  /** Kindle's own wording for the page colour. */
+  /** The theme's own name for its page colour — Kindle's, or daisyUI's. */
   label: string;
   /** Swatch colours for the picker, mirroring the CSS tokens. */
   page: string;
@@ -23,6 +27,8 @@ export type ReadingThemeMeta = {
 };
 
 export const READING_THEME_META: Record<ReadingTheme, ReadingThemeMeta> = {
+  // base-100 and base-content, the two daisyUI tokens the swatch is showing.
+  autumn: { name: "autumn", label: "Autumn", page: "#f1f1f1", ink: "#141414" },
   light: { name: "light", label: "White", page: "#ffffff", ink: "#1b1b1b" },
   sepia: { name: "sepia", label: "Sepia", page: "#fbf0d9", ink: "#4a3b28" },
   green: { name: "green", label: "Green", page: "#dce7d5", ink: "#263323" },
@@ -31,7 +37,7 @@ export const READING_THEME_META: Record<ReadingTheme, ReadingThemeMeta> = {
 
 const THEME_SETTING_KEY = "reading-theme";
 
-const DEFAULT_THEME: ReadingTheme = "light";
+const DEFAULT_THEME: ReadingTheme = "autumn";
 
 function isReadingTheme(value: string | null): value is ReadingTheme {
   return !!value && (READING_THEMES as readonly string[]).includes(value);
@@ -44,7 +50,7 @@ type AppThemeContextType = {
   /** False until the persisted choice has been read back from SQLite. */
   isThemeReady: boolean;
   setTheme: (theme: ReadingTheme) => void;
-  /** Steps through the four page colours, in Kindle's order. */
+  /** Steps through the page colours, in the order declared above. */
   cycleTheme: () => void;
 };
 
@@ -58,16 +64,20 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
   const currentTheme: ReadingTheme = isReadingTheme(theme) ? theme : DEFAULT_THEME;
 
   // Uniwind holds the active theme in memory only, so the stored choice has to
-  // be replayed on every cold start.
+  // be replayed on every cold start — and Uniwind's own starting theme is
+  // `light`, so the default has to be applied here too rather than declared.
+  // `light` is a theme a reader can legitimately choose, which is why the
+  // absence of a stored value is what selects the default, not the current one.
+  //
+  // `_layout.tsx` holds the splash until `isThemeReady`, so this lands before
+  // the first frame instead of flashing the wrong page colour.
   useEffect(() => {
     let isActive = true;
 
     getAppSetting(db, THEME_SETTING_KEY)
       .then((stored) => {
         if (!isActive) return;
-        if (isReadingTheme(stored)) {
-          Uniwind.setTheme(stored);
-        }
+        Uniwind.setTheme(isReadingTheme(stored) ? stored : DEFAULT_THEME);
       })
       .finally(() => {
         if (isActive) setIsThemeReady(true);
