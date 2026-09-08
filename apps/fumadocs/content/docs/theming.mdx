@@ -1,17 +1,28 @@
 ---
 title: Theming
-description: How page themes work in React Native, and where daisyUI's autumn palette fits
+description: How page themes work in React Native, and how the Ochre spot scheme is wired in
 ---
 
-The app ships five page themes. One of them, `autumn`, comes from [daisyUI](https://daisyui.com) and is the default; the other four are Kindle's page colours.
+The app ships five page themes. The default and its night half come from the **Ochre spot** scheme; the middle three are Kindle's page colours.
 
 | Theme | Page | Ink | Where it comes from |
 | --- | --- | --- | --- |
-| `autumn` | `#f1f1f1` | `#141414` | daisyUI's autumn palette — **the default** |
+| `ochre` | `#f4f3f0` | `#1a1a18` | Ochre spot — **the default** |
 | `light` | `#ffffff` | `#1b1b1b` | Kindle "White" — paper, not the stock grey |
 | `sepia` | `#fbf0d9` | `#4a3b28` | Kindle "Sepia" |
 | `green` | `#dce7d5` | `#263323` | Kindle "Green", the pale mint page on newer Paperwhites |
-| `dark` | `#000000` | `#cccccc` | Kindle "Black" — grey ink, not white, to cut glare |
+| `dark` | `#191713` | `#eceae4` | Ochre spot, night reading |
+
+## One accent, spent deliberately
+
+The scheme has exactly one accent — ochre `#a8560f`, `#d99a52` at night — and no secondary or tertiary colour by design. It is spent on two things and nothing else:
+
+- the reader's own saved words
+- the single main action on a screen
+
+Everything else is ink, paper, or grey. In particular **other readers' data stays muted**: lookup counts and shared shelves from [crowdsourced discovery](/docs/api-layer#wordsuggestions) are reference material, not the reader's progress, and colouring them like progress is what turns a reading tool into a dashboard.
+
+Mastery is the one place colour carries meaning — `state-new` is deliberately grey, because an unpractised word should not shout.
 
 ## One file decides how everything looks
 
@@ -20,10 +31,10 @@ The app ships five page themes. One of them, `autumn`, comes from [daisyUI](http
 ```css
 @layer theme {
   :root {
-    @variant autumn {
-      --background: #f1f1f1;   /* base-100 */
-      --foreground: #141414;   /* base-content */
-      --accent: #8c0327;       /* primary */
+    @variant ochre {
+      --background: #f4f3f0;   /* base — e-ink paper */
+      --foreground: #1a1a18;   /* ink */
+      --accent: #a8560f;       /* primary — the one main action */
       /* ...the rest of the token set */
     }
   }
@@ -38,7 +49,7 @@ Every theme must declare the *same* set of variables. A token missing from one t
 2. `extraThemes` in `metro.config.js` — Uniwind only knows about `light` and `dark` on its own
 3. `READING_THEMES` and `READING_THEME_META` in `contexts/app-theme-context.tsx`
 
-Then **restart Metro**. The theme union in `uniwind-types.d.ts` is generated from `extraThemes` at build time, and that file is gitignored — so a stale one is what makes `Uniwind.setTheme("autumn")` fail to typecheck with `not assignable to '"system" | "light" | "sepia" | "green" | "dark"'`. The fix is a bundle, not an edit.
+Then **restart Metro**. The theme union in `uniwind-types.d.ts` is generated from `extraThemes` at build time, and that file is gitignored — so a stale one is what makes `Uniwind.setTheme("ochre")` fail to typecheck with `not assignable to '"system" | "light" | "dark" | "sepia" | "green" | "autumn"'` — a union naming the themes that existed last time Metro ran. The fix is a bundle, not an edit.
 
 ## The default has to be set at runtime
 
@@ -54,28 +65,34 @@ getAppSetting(db, THEME_SETTING_KEY).then((stored) => {
 
 Uniwind holds the active theme in memory only, so this same effect is what replays a saved choice on every cold start (the choice lives in the on-device `app_setting` table — see [Offline dictionary](/docs/offline-dictionary)). `_layout.tsx` holds the splash screen until `isThemeReady`, so the theme lands before the first frame instead of flashing the wrong page colour.
 
-## What daisyUI does and doesn't do here
+## The scheme's own names, as utilities
 
-daisyUI supplies the autumn **palette**. That's the whole of its job in this app, and the boundary is not a stylistic choice:
+The scheme ships more vocabulary than HeroUI has slots for — `primary-pressed`, `primary-tint`, the three mastery states — so `global.css` registers them as Tailwind colours too. `bg-primary`, `text-ink`, `text-state-learning`, `text-ink/70` and `rounded-card` all compile to real RN styles.
 
-- **Its component classes cannot work in React Native.** `btn`, `card`, `badge` and the rest are CSS rules written against DOM elements, leaning on pseudo-elements and `:has()`. React Native has no DOM to apply them to. None are used anywhere in the app, and adding one would silently do nothing.
-- **Its themes are just colour tokens**, which port perfectly.
+The ones that have a HeroUI counterpart are declared as **aliases**, not copies:
 
-The plugin stays in `global.css` so the values are *compiled from daisyUI* rather than copied out of a blog post and left to rot:
-
-```bash
-cd apps/native && bunx @tailwindcss/cli -i global.css -o /tmp/out.css   # read [data-theme=autumn]
+```css
+@theme {
+  --color-ink: var(--foreground);
+  --color-primary: var(--accent);
+  --color-surface-strong: var(--surface-tertiary);
+  /* ... */
+}
 ```
 
+That indirection is the point: `text-ink` then follows the page the reader chose, resolving to the same value HeroUI's own components use, under the name the scheme speaks. Copying the hex into `@theme` instead would give one colour two spellings that drift apart the first time a theme is edited. Only the tokens with no HeroUI counterpart carry values directly, with `dark` overriding them.
+
+Uniwind resolves the chain at runtime — in the bundle, `--color-ink` compiles to `vars => vars["--foreground"]?.(vars)` rather than a frozen string, and alpha variants like `text-ink/70` emit a themed `colorMix` rule alongside the static fallback.
+
 <Callout type="warn">
-daisyUI ships its colours as `oklch()`. React Native's colour parser doesn't accept that function, and an unparseable colour reaches a component as an invalid value rather than an error — so the theme block stores the **hex conversion**, with the daisyUI token each value came from in a trailing comment. Converted values were cross-checked against daisyUI's published autumn colours (`#8c0327`, `#d85251`, `#d59b6b`, `#826a5c`).
+The scheme arrived as a NativeWind v4 drop — a `tailwind.config.js`, `@tailwind base;` directives, and colours as space-separated RGB channels for `<alpha-value>`. None of that applies here: this app runs **Uniwind with Tailwind v4**, which is CSS-first (no JS config), and v4 handles alpha itself, so the channel-triplet trick is unnecessary. What ported is the palette and its rules; the config files did not.
 </Callout>
 
-### daisyUI's colour names work as utilities
+### Colours a className can't reach
 
-The same file registers daisyUI's twenty semantic colours as Tailwind colours, so `bg-primary`, `text-base-content`, and `border-base-300` compile to real RN styles.
+StatusBar, `react-native-svg` fills, chart libraries and `Animated` take colour values, not class names. `lib/palette.ts` serves those, re-exporting the scheme's own values so there is one spelling of ochre in the codebase.
 
-They're declared **once**, not per theme, because they're brand colours: a crimson `primary` is meant to stay crimson on the Sepia page. Anything that should follow the page instead already has a HeroUI token — use those for surfaces and body text, and keep `primary` for the one element on a screen that earns it.
+Its `usePalette()` reads the **app's** theme context rather than React Native's `useColorScheme()`, which the scheme's own file reaches for. The distinction matters here: this app's theme is a choice the reader makes and we persist in SQLite across five themes, not a mirror of the OS setting. Keying off the OS would hand a reader on the Sepia page the light palette while the rest of the app rendered sepia, and would ignore their choice entirely on a phone whose system theme disagrees.
 
 ## Verifying a theme change
 
@@ -84,8 +101,8 @@ Typechecking is not enough: `tsc` reads the generated theme union, and the colou
 ```bash
 cd apps/native && bunx expo start --port 8099 --clear
 curl -s -o bundle.js "http://localhost:8099/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false"
-grep -c "8c0327" bundle.js      # the palette reached the app
-grep -c "oklch(" bundle.js      # only ever library parser code, never a colour value
+grep -c "a8560f" bundle.js       # the palette reached the app
+grep -o 'vars\["--color-ink"\][^,]*' bundle.js   # the alias resolves, rather than freezing
 ```
 
-That's how the two traps above were caught — a colour that typechecks perfectly and renders as nothing is otherwise invisible until someone opens the screen.
+That's how the traps above were caught — a colour that typechecks perfectly and renders as nothing is otherwise invisible until someone opens the screen.

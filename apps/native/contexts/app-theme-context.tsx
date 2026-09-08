@@ -5,21 +5,21 @@ import { Uniwind, useUniwind } from "uniwind";
 import { getAppSetting, setAppSetting } from "@/lib/app-settings";
 
 /**
- * The page themes. `autumn` is daisyUI's palette of that name and the default;
- * the rest are Kindle's page colours. `light` and `dark` are Uniwind built-ins
- * redefined in global.css; `autumn`, `sepia` and `green` are registered through
- * `extraThemes` in metro.config.js.
+ * The page themes. `ochre` is the Ochre spot scheme and the default, `dark` is
+ * that scheme's night half, and the middle three are Kindle's page colours.
+ * `light` and `dark` are Uniwind built-ins redefined in global.css; `ochre`,
+ * `sepia` and `green` are registered through `extraThemes` in metro.config.js.
  *
- * Autumn leads the list so the picker opens on the default rather than
+ * Ochre leads the list so the picker opens on the default rather than
  * scrolling to it, which also makes it the first stop when cycling.
  */
-export const READING_THEMES = ["autumn", "light", "sepia", "green", "dark"] as const;
+export const READING_THEMES = ["ochre", "light", "sepia", "green", "dark"] as const;
 
 export type ReadingTheme = (typeof READING_THEMES)[number];
 
 export type ReadingThemeMeta = {
   name: ReadingTheme;
-  /** The theme's own name for its page colour — Kindle's, or daisyUI's. */
+  /** The theme's own name for its page colour — Kindle's, or the scheme's. */
   label: string;
   /** Swatch colours for the picker, mirroring the CSS tokens. */
   page: string;
@@ -27,17 +27,17 @@ export type ReadingThemeMeta = {
 };
 
 export const READING_THEME_META: Record<ReadingTheme, ReadingThemeMeta> = {
-  // base-100 and base-content, the two daisyUI tokens the swatch is showing.
-  autumn: { name: "autumn", label: "Autumn", page: "#f1f1f1", ink: "#141414" },
+  // The scheme's `base` and `ink` — the two values the swatch is showing.
+  ochre: { name: "ochre", label: "Ochre", page: "#f4f3f0", ink: "#1a1a18" },
   light: { name: "light", label: "White", page: "#ffffff", ink: "#1b1b1b" },
   sepia: { name: "sepia", label: "Sepia", page: "#fbf0d9", ink: "#4a3b28" },
   green: { name: "green", label: "Green", page: "#dce7d5", ink: "#263323" },
-  dark: { name: "dark", label: "Black", page: "#000000", ink: "#cccccc" },
+  dark: { name: "dark", label: "Night", page: "#191713", ink: "#eceae4" },
 };
 
 const THEME_SETTING_KEY = "reading-theme";
 
-const DEFAULT_THEME: ReadingTheme = "autumn";
+const DEFAULT_THEME: ReadingTheme = "ochre";
 
 function isReadingTheme(value: string | null): value is ReadingTheme {
   return !!value && (READING_THEMES as readonly string[]).includes(value);

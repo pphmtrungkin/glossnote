@@ -2,22 +2,6 @@
 @import "uniwind";
 @import "heroui-native/styles";
 /*
- * daisyUI supplies the `autumn` palette below — this is the plugin the values
- * come from, so regenerating them is a compile rather than a copy-paste:
- *
- *   bunx @tailwindcss/cli -i global.css -o /tmp/out.css   # then read [data-theme=autumn]
- *
- * Its *component* classes (`btn`, `card`, `badge`) cannot work here and are
- * not used anywhere in the app: they are CSS rules written against DOM
- * elements, with pseudo-elements and `:has()`, and React Native has no DOM to
- * apply them to. What ports cleanly is the theme — a set of colour tokens —
- * which is what the two blocks below turn into Uniwind styles.
- */
-@plugin "daisyui" {
-  themes: autumn --default;
-}
-
-/*
  * Kindle-style reading themes.
  *
  * HeroUI Native drives every component off the custom properties declared in
@@ -35,69 +19,69 @@
   :root {
 
     /*
-     * daisyUI "Autumn" — the app's default page.
+     * Ochre spot — the app's default page.
      *
-     * Values are daisyUI's own autumn tokens, converted out of `oklch()`:
-     * React Native's colour parser doesn't accept that function, so an oklch
-     * value reaches a component as an invalid colour rather than an error.
-     * Left column is the daisyUI token each one came from.
+     * One accent only, by design: ochre is spent on the reader's own saved
+     * words and the single main action on a screen. There is deliberately no
+     * secondary or tertiary colour, and other readers' data — lookup counts,
+     * shared shelves, ranks — stays muted grey rather than taking the accent.
+     * That rule is what keeps `word.suggestions` reading as reference material
+     * instead of as the reader's own progress.
      */
-    @variant autumn {
-      --background: #f1f1f1; /* base-100 */
-      --foreground: #141414; /* base-content */
+    @variant ochre {
+      --background: #f4f3f0; /* base — e-ink paper */
+      --foreground: #1a1a18; /* ink — all body and heading type */
 
-      --surface: #f1f1f1; /* base-100 */
+      --surface: #f4f3f0; /* base */
       --surface-foreground: var(--foreground);
-      --surface-secondary: #dbdbdb; /* base-200 */
+      --surface-secondary: #e7e5e1; /* surface — book covers, inset blocks */
       --surface-secondary-foreground: var(--foreground);
-      --surface-tertiary: #c5c5c5; /* base-300 */
+      --surface-tertiary: #d3d0ca; /* surface-strong — inert track fills */
       --surface-tertiary-foreground: var(--foreground);
 
-      --overlay: #f1f1f1; /* base-100 */
+      --overlay: #f4f3f0;
       --overlay-foreground: var(--foreground);
-      --backdrop: rgba(20, 20, 20, 0.25);
+      --backdrop: rgba(26, 26, 24, 0.25);
 
-      --muted: #826a5c; /* neutral */
+      --muted: #6b6a66; /* metadata, and every other reader's data */
 
-      --default: #dbdbdb; /* base-200 */
+      --default: #e7e5e1; /* surface */
       --default-foreground: var(--foreground);
 
-      /* daisyUI's `primary` is the one saturated colour a screen is meant to
-         spend once, which is exactly what HeroUI calls the accent. */
-      --accent: #8c0327; /* primary */
-      --accent-foreground: #edd0d0; /* primary-content */
+      /* HeroUI's accent is "the one main action", which is the same slot the
+         scheme spends primary on. */
+      --accent: #a8560f; /* primary */
+      --accent-foreground: #ffffff; /* primary-content */
 
-      --field-background: #f1f1f1; /* base-100 */
+      --field-background: #f4f3f0;
       --field-foreground: var(--foreground);
-      --field-placeholder: #826a5c; /* neutral */
+      --field-placeholder: #6b6a66; /* muted */
       --field-border: transparent;
 
-      --success: #499380; /* success */
-      --success-foreground: #020806; /* success-content */
-      --warning: #e97f16; /* warning */
-      --warning-foreground: #130600; /* warning-content */
-      --danger: #d40014; /* error */
-      --danger-foreground: #ffd4d1; /* error-content */
+      --success: #4f7a4a;
+      --success-foreground: #ffffff;
+      --warning: #b8862a;
+      --warning-foreground: #ffffff;
+      --danger: #a63b2a;
+      --danger-foreground: #ffffff;
 
-      --segment: #f1f1f1; /* base-100 */
+      --segment: #f4f3f0;
       --segment-foreground: var(--foreground);
 
-      /* Borders follow daisyUI's own elevation scale rather than inventing a
-         greyer grey: base-200 for a border, base-300 for the stronger rule. */
-      --border: #dbdbdb; /* base-200 */
-      --separator: #c5c5c5; /* base-300 */
+      --border: #e7e5e1; /* surface */
+      --separator: #d3d0ca; /* surface-strong */
       --focus: var(--accent);
       --link: var(--foreground);
 
       --surface-shadow:
-        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
-        0 0 1px 0 rgba(0, 0, 0, 0.06);
+        0 2px 4px 0 rgba(26, 26, 24, 0.04), 0 1px 2px 0 rgba(26, 26, 24, 0.06),
+        0 0 1px 0 rgba(26, 26, 24, 0.06);
       --overlay-shadow:
-        0 2px 8px 0 rgba(0, 0, 0, 0.02), 0 -6px 12px 0 rgba(0, 0, 0, 0.01),
-        0 14px 28px 0 rgba(0, 0, 0, 0.03);
+        0 2px 8px 0 rgba(26, 26, 24, 0.02), 0 -6px 12px 0 rgba(26, 26, 24, 0.01),
+        0 14px 28px 0 rgba(26, 26, 24, 0.03);
       --field-shadow:
-        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
-        0 0 1px 0 rgba(0, 0, 0, 0.06);
+        0 2px 4px 0 rgba(26, 26, 24, 0.04), 0 1px 2px 0 rgba(26, 26, 24, 0.06),
+        0 0 1px 0 rgba(26, 26, 24, 0.06);
     }
 
     /* Kindle "White" — paper, not the stock grey. */
@@ -265,53 +249,57 @@
         0 0 1px 0 rgba(38, 51, 35, 0.07);
     }
 
-    /* Kindle "Black" — true black page, grey ink rather than white to cut
-       glare in the dark. */
+    /*
+     * Ochre spot, night reading. Same roles as the light page, different
+     * values — this is the scheme's own dark half, and it replaces Kindle's
+     * true-black page: both are "the dark theme", and keeping a #000 page with
+     * an unrelated blue accent would leave one theme outside the new system.
+     */
     @variant dark {
-      --background: #000000;
-      --foreground: #cccccc;
+      --background: #191713; /* base */
+      --foreground: #eceae4; /* ink */
 
-      --surface: #121212;
+      --surface: #191713; /* base */
       --surface-foreground: var(--foreground);
-      --surface-secondary: #1a1a1a;
+      --surface-secondary: #24211b; /* surface */
       --surface-secondary-foreground: var(--foreground);
-      --surface-tertiary: #232323;
+      --surface-tertiary: #332f28; /* surface-strong */
       --surface-tertiary-foreground: var(--foreground);
 
-      --overlay: #161616;
+      --overlay: #24211b;
       --overlay-foreground: var(--foreground);
       --backdrop: rgba(0, 0, 0, 0.5);
 
-      --muted: #8a8a8a;
+      --muted: #9a958c;
 
-      --default: #1e1e1e;
+      --default: #24211b; /* surface */
       --default-foreground: var(--foreground);
 
-      --accent: #7fa9d6;
-      --accent-foreground: #06121f;
+      --accent: #d99a52; /* primary */
+      --accent-foreground: #2a1706; /* primary-content */
 
-      --field-background: #121212;
+      --field-background: #24211b;
       --field-foreground: var(--foreground);
-      --field-placeholder: #7a7a7a;
+      --field-placeholder: #9a958c;
       --field-border: transparent;
 
-      --success: #5fa97a;
-      --success-foreground: #06180e;
-      --warning: #d0a24e;
-      --warning-foreground: #1a1206;
-      --danger: #d9705f;
-      --danger-foreground: #1d0906;
+      --success: #84ad7e;
+      --success-foreground: #191713;
+      --warning: #d6ac60;
+      --warning-foreground: #191713;
+      --danger: #d47664;
+      --danger-foreground: #191713;
 
-      --segment: #2a2a2a;
+      --segment: #332f28;
       --segment-foreground: var(--foreground);
 
-      --border: #2a2a2a;
-      --separator: #3d3d3d;
+      --border: #24211b;
+      --separator: #332f28;
       --focus: var(--accent);
       --link: var(--foreground);
 
       --surface-shadow: 0 0 0 0 transparent inset;
-      --overlay-shadow: 0 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+      --overlay-shadow: 0 0 1px 0 rgba(236, 234, 228, 0.15) inset;
       --field-shadow: 0 0 0 0 transparent inset;
     }
   }
@@ -327,36 +315,60 @@
  * rather than `font-serif font-bold`.
  */
 /*
- * daisyUI's colour names, as Tailwind colours Uniwind can compile: `bg-primary`,
- * `text-base-content`, `border-base-300` and the rest all work in RN from here.
+ * The Ochre spot scheme's own names, as utilities: `bg-primary`, `text-ink`,
+ * `text-state-learning`, `rounded-card`.
  *
- * Declared in hex rather than the oklch daisyUI ships, for the reason given on
- * the autumn variant above. They are stated once rather than per theme: these
- * are brand colours, and a crimson `primary` is meant to stay crimson on the
- * Sepia page. Anything that should follow the page instead already has a
- * HeroUI token above — use those for surfaces and body text.
+ * The first group are aliases onto the per-theme variables above rather than
+ * copies of the hex, so `text-ink` follows the page the reader chose — the
+ * same value HeroUI's own components resolve, under the name the scheme uses.
+ * Copying the hex here instead would give two spellings of one colour that
+ * drift the first time a theme is edited.
+ *
+ * The second group has no HeroUI counterpart, so it carries values directly;
+ * `dark` overrides them below. They are the scheme's own vocabulary — the
+ * pressed/tinted variants of the accent, and the three mastery states.
  */
 @theme {
-  --color-primary: #8c0327;
-  --color-primary-content: #edd0d0;
-  --color-secondary: #d85251;
-  --color-secondary-content: #110202;
-  --color-accent: #d59b6b;
-  --color-accent-content: #100904;
-  --color-neutral: #826a5c;
-  --color-neutral-content: #e5e0dd;
-  --color-base-100: #f1f1f1;
-  --color-base-200: #dbdbdb;
-  --color-base-300: #c5c5c5;
-  --color-base-content: #141414;
-  --color-info: #44adbb;
-  --color-info-content: #020b0d;
-  --color-success: #499380;
-  --color-success-content: #020806;
-  --color-warning: #e97f16;
-  --color-warning-content: #130600;
-  --color-error: #d40014;
-  --color-error-content: #ffd4d1;
+  --color-base: var(--background);
+  --color-ink: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface-secondary);
+  --color-surface-strong: var(--surface-tertiary);
+  --color-primary: var(--accent);
+  --color-primary-content: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --color-primary-pressed: #94490b;
+  --color-primary-deep: #7d3f0a;
+  --color-primary-tint: #f2e6da;
+  --color-primary-soft: #ddb894;
+
+  /* Mastery is the one place colour carries meaning. `new` is deliberately
+     grey: an unpractised word should not shout at the reader. */
+  --color-state-new: #6b6a66;
+  --color-state-learning: #a8560f;
+  --color-state-steady: #403f3c;
+
+  /* Square-ish corners: paper, not plastic. */
+  --radius-card: 2px;
+}
+
+@layer theme {
+  :root {
+    /* Night values for the tokens that have no HeroUI equivalent to follow. */
+    @variant dark {
+      --color-primary-pressed: #e7ad6a;
+      --color-primary-deep: #f0c48a;
+      --color-primary-tint: #33261a;
+      --color-primary-soft: #5e4429;
+
+      --color-state-new: #9a958c;
+      --color-state-learning: #d99a52;
+      --color-state-steady: #bab5ac;
+    }
+  }
 }
 
 @theme {
