@@ -8,9 +8,10 @@ export const book = pgTable(
   "book",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    // Free text, not an enum: the metadata source (Google Books, Open Library,
-    // manual entry, ...) is still being decided, and a Postgres enum would need
-    // a migration every time a new provider is added.
+    // Free text, not an enum. `hardcover` is the only value written today (by
+    // book.search, and by the seed), but a Postgres enum would need a
+    // migration every time another source — Google Books, Open Library, manual
+    // entry — is added, and the unique index below is what actually matters.
     provider: text("provider").notNull(),
     externalId: text("external_id"),
     title: text("title").notNull(),

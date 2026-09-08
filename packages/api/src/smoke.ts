@@ -77,13 +77,20 @@ ok("normalizeTerm is the one match key: trim + lowercase, idempotent");
 // assertion below counts rows. Clear anything this script created before
 // starting — `seed_%` ids are the seed's, everything else is ours.
 await db.delete(folder).where(and(eq(folder.userId, USER_ID), notLike(folder.id, "seed_%")));
-await db.delete(book).where(eq(book.provider, "hardcover"));
+// Seeded books carry the `hardcover` provider too, so this can no longer key
+// on provider alone — it would delete the seed. Same `seed_%` rule as folders.
+await db.delete(book).where(and(eq(book.provider, "hardcover"), notLike(book.id, "seed_%")));
 
 // ---- reads over the seeded state ----------------------------------------
 const folders = await api.folder.list();
 assert.equal(folders.length, 3, "seed creates 3 folders");
 assert.equal(folders.filter((f) => f.book).length, 2, "2 book-linked folders join a book row");
 assert.equal(folders.find((f) => f.id === "seed_folder_misc")!.book, null, "freeform folder has no book");
+assert.equal(
+  folders.filter((f) => f.book?.provider === "hardcover").length,
+  2,
+  "seeded books use the provider the app actually writes, and survive this script's own cleanup",
+);
 ok("folder.list joins book, freeform stays null");
 
 const dune = await api.word.listByFolder({ folderId: "seed_folder_dune" });
@@ -222,6 +229,13 @@ assert.throws(() => mapSearchResults({ unexpected: true }), /Unexpected search r
 ok("search results map from Typesense hits, tolerating a missing cover");
 
 // ---- linking a book to a new folder --------------------------------------
+// Must not match a seeded book's external id: `book` is unique on
+// (provider, external_id), so a collision would upsert onto the seed row and
+// the metadata-refresh assertion below would rewrite seeded data.
+assert.ok(
+  !folders.some((f) => f.book?.externalId === "32897"),
+  "the fixture's external id collides with a seeded book",
+);
 const hit = {
   externalId: "32897",
   title: "Dune",

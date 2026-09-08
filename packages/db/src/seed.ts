@@ -86,19 +86,28 @@ async function seed() {
   });
 
   // --- Books ---------------------------------------------------------------
+  // `hardcover` is the only provider anything writes (see HARDCOVER_PROVIDER in
+  // packages/api/src/routers/book.ts). These were `open_library` until the
+  // metadata source was settled, which left dev databases full of books from a
+  // provider the app never queries.
+  //
+  // The external ids are the real Hardcover ones, and must stay distinct from
+  // the fixture id in packages/api/src/smoke.ts: `book` is unique on
+  // (provider, external_id), so a collision would make the smoke test's upsert
+  // rewrite a seeded row instead of creating its own.
   const books = [
     {
       id: "seed_book_dune",
-      provider: "open_library",
-      externalId: "OL1532948W",
+      provider: "hardcover",
+      externalId: "312460",
       title: "Dune",
       authors: ["Frank Herbert"],
       description: "Political intrigue and ecology on the desert planet Arrakis.",
     },
     {
       id: "seed_book_pale_fire",
-      provider: "open_library",
-      externalId: "OL1913699W",
+      provider: "hardcover",
+      externalId: "141104",
       title: "Pale Fire",
       authors: ["Vladimir Nabokov"],
       description: "A 999-line poem and its increasingly unreliable commentary.",
