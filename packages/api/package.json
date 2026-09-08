@@ -11,13 +11,13 @@
   },
   "scripts": {},
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.124.0",
     "@better-vocab/auth": "workspace:*",
     "@better-vocab/db": "workspace:*",
     "@better-vocab/domain": "workspace:*",
     "@better-vocab/env": "workspace:*",
     "@trpc/client": "catalog:",
     "@trpc/server": "catalog:",
+    "ai": "^7.0.93",
     "dotenv": "catalog:",
     "drizzle-orm": "^0.45.2",
     "zod": "catalog:"

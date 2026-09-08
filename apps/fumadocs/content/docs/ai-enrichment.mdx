@@ -42,15 +42,17 @@ A call that fails releases the claim (`enrichedAt` back to `null`), so a timeout
 
 ## Why this is server-side
 
-The same rule as [Book search](/docs/book-search#why-this-has-to-be-server-side), for the same reason. `ANTHROPIC_API_KEY` lives in `apps/server/.env`, validated in `packages/env/src/server.ts`, and is **never** an `EXPO_PUBLIC_*` variable — a key shipped in the Expo bundle is extractable from the app binary, and one misbehaving client would spend everyone's budget. The app calls its own tRPC procedure; the server calls the provider. It never talks to an AI provider directly, and there is no procedure that would let it pass a prompt through.
+The same rule as [Book search](/docs/book-search#why-this-has-to-be-server-side), for the same reason. `AI_GATEWAY_API_KEY` lives in `apps/server/.env`, validated in `packages/env/src/server.ts`, and is **never** an `EXPO_PUBLIC_*` variable — a key shipped in the Expo bundle is extractable from the app binary, and one misbehaving client would spend everyone's budget. The app calls its own tRPC procedure; the server calls the provider. It never talks to an AI provider directly, and there is no procedure that would let it pass a prompt through.
 
 The key is **optional**, like Hardcover's. Without one, `dictionary.lookup` still resolves definitions through Datamuse and still caches them — words simply never gain a sentence. Enrichment is an upgrade on top of a definition the reader already has, so it must never be able to turn a working lookup into a failed one.
 
 | What went wrong | What the reader gets |
 | --- | --- |
-| No `ANTHROPIC_API_KEY` configured | The base definition |
-| Provider down, or slower than 15s | The base definition; the claim is released, so the next lookup retries |
-| The model declines, or the output doesn't validate | The base definition |
+| No `AI_GATEWAY_API_KEY` configured | The base definition |
+| Gateway or provider down, or slower than 15s | The base definition; the claim is released, so the next lookup retries |
+| `402` (no credit, or a budget hit) or `403` (model not on your tier) | The base definition |
+| Rate-limited, and the retry backoff outlasts the 15s budget | The base definition; the claim is released |
+| The model declines, or the output can't be repaired into the schema | The base definition |
 | A field comes back blank | The base definition — no half-filled row |
 
 ## The prompt has one hard rule
@@ -61,27 +63,61 @@ That isn't stylistic. Readers log words *mid-book*, and a sentence lifted from t
 
 The usage note is capped at fifteen words and asked to say something a reader could not have read off the definition itself — register, or how rare the word is.
 
-## Swapping the provider
+## Swapping the model
 
-Everything about the provider is behind one function, `enrichDefinition` in `packages/api/src/enrich.ts`. It takes a term and a definition and returns `{ exampleSentence, usageNote }` or `null`. Nothing else in the codebase imports an SDK, knows a model name, or handles a provider error.
+Everything about the provider is behind one function, `enrichDefinition` in `packages/api/src/enrich.ts`. It takes a term and a definition and returns `{ exampleSentence, usageNote }` or `null`. Nothing else in the codebase imports an AI SDK, knows a model name, or handles a provider error.
 
 ```ts
 export async function enrichDefinition(term: string, definition: string): Promise<Enrichment | null>
 ```
 
-Changing model or vendor is an edit to that file. The tRPC contract doesn't move, no client code changes, and `dictionary.lookup` keeps its claim/release logic regardless of who answers.
+Requests go through [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), which is what makes "swappable" real rather than aspirational. The model is a string:
 
-Two choices worth knowing:
+```ts
+const ENRICHMENT_MODEL = "zai/glm-4.7-flashx";
+```
 
-- **A small, fast model tier** ([Claude Haiku](https://docs.claude.com/en/docs/about-claude/models)), on purpose. An example sentence and a register note are not frontier-reasoning work, and this runs once per unique word across every reader — the spec calls for the cheap tier here and it's the right call.
-- **Structured output**, validated against a Zod schema, rather than parsing prose out of a text response. The two fields are the exact shape of the two nullable columns, so there is nothing to map on the way in and nothing to regex on the way out.
+Moving to a different model — or a different *vendor* — is that line. No second SDK, no second account, no second key, and no change to the tRPC contract, the client, or `dictionary.lookup`'s claim/release logic. The gateway also retries another provider when the first one is failing, which for a call that's already allowed to fail softly is a free reduction in how often the column stays empty.
 
-The SDK timeout is 15 seconds with one retry, tighter than the SDK's own defaults, because this happens inside a lookup a reader is waiting on.
+Three choices worth knowing:
+
+- **A small, fast tier** (GLM 4.7 FlashX), on purpose. An example sentence and a register note are not frontier-reasoning work, and this runs once per unique word across every reader — the spec calls for the cheap tier here and it's the right call. At roughly $0.06/$0.40 per million tokens it is an order of magnitude below the frontier-lite tier (Claude Haiku 4.5 is $1/$5) for a task where the two are hard to tell apart. Tokens through the gateway cost what they cost at the provider, with no markup.
+- **`generateObject` with a Zod schema**, rather than parsing prose out of a text response. The AI SDK picks whichever structured-output mechanism the routed model supports, which is the other half of keeping the model swappable — a hand-rolled `response_format` would be one provider's dialect. The two fields are the exact shape of the two nullable columns, so nothing is mapped on the way in.
+- **15 seconds and one retry**, tighter than the SDK's defaults, because this happens inside a lookup a reader is waiting on.
+
+Gateway model ids are `provider/model` and must match the catalog exactly — a slug invented by analogy will 404. `GET https://ai-gateway.vercel.sh/v1/models` lists every id, needs no auth, and is the way to check a replacement before pasting it into that constant.
+
+## Cheap models have quirks; budget for two of them
+
+Both of these are measured against GLM through the gateway, not anticipated.
+
+**It wraps.** On roughly half of calls the model returns the right two fields one level too deep — `{"answer": {exampleSentence, usageNote}}` — which fails schema validation outright. `generateObject`'s `repairText` hook runs *only* after parsing or validation has already failed, which makes it the right place for this: zero cost on the happy path, and it rescues the one shape we actually see.
+
+```ts
+// packages/api/src/enrich.ts
+export function unwrapWrappedObject(text: string): string | null
+```
+
+One key holding one object is a wrapper, and the object inside it is the answer. Anything else — two keys, a scalar, an array, prose — returns `null`, the enrichment is skipped, and the term stays plain. Guessing at an unrecognised shape would risk filing something odd into a table every reader shares, which is a worse outcome than an empty column. `db:smoke` asserts all six cases against captured payloads, without spending a call.
+
+**It reasons anyway.** The call asks for `reasoning: "none"` — filling two short fields from a definition it was handed is not a reasoning task, and output tokens are the expensive half of this model's bill. Measured, GLM spent 250 reasoning tokens regardless. Treat the option as a request the provider may ignore: it costs nothing to ask, and a model swapped in later may honour it.
 
 ## What's verified, and what isn't
 
 `bun run db:smoke` asserts the parts that don't need a provider: that a cached term is served from the shared row, that the base definition is never rewritten, that a failed or unconfigured enrichment releases its claim and leaves no half-filled row, and that an already-enriched row is returned untouched rather than enriched twice.
 
-Those checks **skip themselves** when `ANTHROPIC_API_KEY` is set. Same rule as Hardcover: the smoke test makes no external calls, and a check that spends money on every run is a check people stop running.
+Those checks **skip themselves** when `AI_GATEWAY_API_KEY` is set. Same rule as Hardcover: the smoke test makes no external calls, and a check that spends money on every run is a check people stop running.
 
-So the one thing still unverified is a live call. Set the key, look up a word nobody has resolved yet, and read the row back — `enrichedAt` set, both columns filled, `source` moved to `ai_enhanced`. Nothing renders those two columns in the app yet; `useDefinition` already returns the whole entry, so showing them is a render change, not a server one.
+One live call has been run end to end against the gateway, which is what turned up both quirks above:
+
+```
+petrichor 10225ms OK
+   e: We walked outside to enjoy the petrichor that filled the air.
+   u: Mostly found in literature rather than everyday speech.
+```
+
+What that leaves unverified is the path through `dictionary.lookup` itself — the claim, the write-back, `source` moving to `ai_enhanced` — against a live model rather than the offline assertions. Look up a word nobody has resolved yet and read the row back.
+
+Worth knowing before you do: on an AI Gateway account with no purchased credits, most of the catalog is either unavailable (`deepseek/deepseek-v4-flash-0731` answers "free tier users do not have access to this model") or rate-limited within a handful of requests. When that happens the SDK's retry backoff usually outlasts the 15-second budget, and the call fails soft exactly as designed — the claim is released and the next lookup of that term tries again.
+
+Nothing renders these two columns in the app yet; `useDefinition` already returns the whole entry, so showing them is a render change, not a server one.

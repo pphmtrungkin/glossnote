@@ -25,6 +25,7 @@ import {
 } from "@better-vocab/domain";
 import { book } from "@better-vocab/db/schema/book";
 import { env } from "@better-vocab/env/server";
+import { unwrapWrappedObject } from "./enrich";
 import { mapSearchResults } from "./routers/book";
 import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
@@ -335,12 +336,37 @@ assert.equal(linkedWord!.definitionOverride, null, "the server's answer supersed
 await db.delete(dictionaryEntry).where(eq(dictionaryEntry.id, "smoke_dict_lookup"));
 ok("word.create links a server-resolved entry instead of storing an override");
 
+// ---- cheap models wrap their answers ------------------------------------
+// The repair the enrichment call falls back to when validation fails. GLM
+// returns the right two fields nested under a key it invented on roughly half
+// of calls; without this, half the terms would stay un-enriched for no reason
+// worth having. Real payloads, captured from the gateway.
+assert.equal(
+  unwrapWrappedObject('{"answer":{"exampleSentence":"The house had an eldritch stillness.","usageNote":"Literary."}}'),
+  '{"exampleSentence":"The house had an eldritch stillness.","usageNote":"Literary."}',
+  "one key holding one object is a wrapper, and the object inside it is the answer",
+);
+assert.equal(
+  unwrapWrappedObject('{"exampleSentence":"a","usageNote":"b"}'),
+  null,
+  "an answer that is already flat is not a wrapper — two keys, nothing to unwrap",
+);
+assert.equal(
+  unwrapWrappedObject('{"result":{"exampleSentence":"a","usageNote":"b"},"note":"extra"}'),
+  null,
+  "a shape with more than one key is not recognised, and guessing would file something odd in a shared table",
+);
+assert.equal(unwrapWrappedObject('{"answer":"just a string"}'), null, "a wrapper must hold an object, not a scalar");
+assert.equal(unwrapWrappedObject('[{"exampleSentence":"a"}]'), null, "an array is not a wrapper");
+assert.equal(unwrapWrappedObject("Sure! Here is the JSON:"), null, "prose is unrepairable, not a crash");
+ok("a wrapped model answer is unwrapped; anything else is left unrepaired");
+
 // ---- AI enrichment: at most one call per term, ever ----------------------
 // Enrichment is keyed by term on the shared row, never by user — that is what
 // holds the spec's cost target (§8.3: one unique word, at most one AI call,
 // across the entire user base). `enrichedAt` is both the marker and the claim.
 //
-// Like the Hardcover section, this never calls the provider: the assertions
+// Like the Hardcover section, this never calls the gateway: the assertions
 // below are the unconfigured path, which is also the failure path. A key in
 // the environment would make the run cost money and depend on the network, so
 // it is skipped instead.
@@ -350,8 +376,8 @@ await db.insert(dictionaryEntry).values({
   definition: "Strange in a way that inspires fear; otherworldly.",
   source: "dictionary_api",
 });
-if (env.ANTHROPIC_API_KEY) {
-  ok("enrichment path skipped: ANTHROPIC_API_KEY is set and db:smoke makes no external calls");
+if (env.AI_GATEWAY_API_KEY) {
+  ok("enrichment path skipped: AI_GATEWAY_API_KEY is set and db:smoke makes no external calls");
 } else {
   const unenriched = await api.dictionary.lookup({ term: "  Eldritch " });
   assert.equal(unenriched!.id, "smoke_dict_enrich", "a term already in the shared cache is served from it");

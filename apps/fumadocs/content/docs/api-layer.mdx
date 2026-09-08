@@ -65,7 +65,7 @@ The same fuzzy behaviour is worth keeping in mind for later — it is a ready-ma
 
 Enrichment adds an example sentence and a usage note to the *same shared row*, leaving the base definition exactly as the dictionary gave it. It happens at most once per term across the entire user base, and `enrichedAt` is both the marker and the lock that makes that true under concurrency — the claim is a conditional update taken *before* the call, so two readers hitting the same brand-new word buy one enrichment between them rather than one each.
 
-The provider lives behind a single function, `enrichDefinition` (`packages/api/src/enrich.ts`), and `ANTHROPIC_API_KEY` is server-only and optional: without it, lookups resolve and cache base definitions exactly as before, and every failure returns the base row rather than breaking the lookup.
+The provider lives behind a single function, `enrichDefinition` (`packages/api/src/enrich.ts`), which calls the model through Vercel AI Gateway — so the model is one `provider/model` string, and `AI_GATEWAY_API_KEY` is server-only and optional: without it, lookups resolve and cache base definitions exactly as before, and every failure returns the base row rather than breaking the lookup.
 
 See [AI enrichment](/docs/ai-enrichment) for the cost model, the claim, the spoiler rule baked into the prompt, and what swapping providers involves.
 

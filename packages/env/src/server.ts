@@ -20,11 +20,17 @@ export const env = createEnv({
     // clean "not configured" instead of failing at import time.
     HARDCOVER_API_TOKEN: z.string().min(1).optional(),
     // Powers AI enrichment of shared dictionary entries (packages/api/src/
-    // enrich.ts). Server-only by SoftwareSpec §8.1 — the Expo app never talks
-    // to a provider directly, so this must never become an EXPO_PUBLIC_* var.
-    // Optional: without it dictionary.lookup still resolves and caches base
-    // definitions, they just never gain an example sentence.
-    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // enrich.ts), through Vercel AI Gateway — one key for whichever model that
+    // file names, rather than an account and an SDK per provider. Server-only
+    // by SoftwareSpec §8.1 — the Expo app never talks to a provider directly,
+    // so this must never become an EXPO_PUBLIC_* var. Optional: without it
+    // dictionary.lookup still resolves and caches base definitions, they just
+    // never gain an example sentence.
+    //
+    // Named for what the AI SDK reads from process.env on its own: it resolves
+    // the key itself, and this schema entry is what makes it a declared,
+    // validated part of the server's environment rather than an ambient one.
+    AI_GATEWAY_API_KEY: z.string().min(1).optional(),
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   },
   runtimeEnv: process.env,
