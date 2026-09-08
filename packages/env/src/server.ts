@@ -19,6 +19,12 @@ export const env = createEnv({
     // Optional so the app still boots without one — book.search reports a
     // clean "not configured" instead of failing at import time.
     HARDCOVER_API_TOKEN: z.string().min(1).optional(),
+    // Powers AI enrichment of shared dictionary entries (packages/api/src/
+    // enrich.ts). Server-only by SoftwareSpec §8.1 — the Expo app never talks
+    // to a provider directly, so this must never become an EXPO_PUBLIC_* var.
+    // Optional: without it dictionary.lookup still resolves and caches base
+    // definitions, they just never gain an example sentence.
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
     NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   },
   runtimeEnv: process.env,

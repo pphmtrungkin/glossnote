@@ -2,9 +2,10 @@ import { normalizeTerm } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { dictionaryEntry } from "@better-vocab/db/schema/dictionary";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
+import { enrichDefinition } from "../enrich";
 import { protectedProcedure, router } from "../index";
 
 const DATAMUSE_ENDPOINT = "https://api.datamuse.com/words";
@@ -51,6 +52,51 @@ export function pickDefinition(payload: unknown, normalizedTerm: string): string
   return text.length > 0 ? text : null;
 }
 
+type DictionaryEntry = typeof dictionaryEntry.$inferSelect;
+
+/**
+ * Adds the AI example sentence and usage note to a shared entry — at most once
+ * per term, across the entire user base (SoftwareSpec §8.3, §10).
+ *
+ * `enrichedAt` is both the marker and the lock. Stamping it *before* the call
+ * is what makes "at most once" true under concurrency: two readers hitting the
+ * same brand-new word buy one enrichment between them, not one each. The
+ * conditional update is the claim — losing it means someone else is already
+ * paying, so this request returns the base definition and moves on.
+ *
+ * A failed call releases the claim, so a timeout costs the term nothing worse
+ * than staying un-enriched until the next lookup.
+ */
+async function enrichOnce(entry: DictionaryEntry): Promise<DictionaryEntry> {
+  if (entry.enrichedAt) return entry;
+
+  const [claimed] = await db
+    .update(dictionaryEntry)
+    .set({ enrichedAt: new Date() })
+    .where(and(eq(dictionaryEntry.id, entry.id), isNull(dictionaryEntry.enrichedAt)))
+    .returning();
+  if (!claimed) return entry;
+
+  const enrichment = await enrichDefinition(entry.term, entry.definition);
+  if (!enrichment) {
+    const [released] = await db
+      .update(dictionaryEntry)
+      .set({ enrichedAt: null })
+      .where(eq(dictionaryEntry.id, entry.id))
+      .returning();
+    return released ?? entry;
+  }
+
+  const [enriched] = await db
+    .update(dictionaryEntry)
+    // The base definition stays exactly as the dictionary gave it; `source`
+    // records that this row has been through the AI pass on top of it.
+    .set({ ...enrichment, source: "ai_enhanced" })
+    .where(eq(dictionaryEntry.id, entry.id))
+    .returning();
+  return enriched ?? entry;
+}
+
 export const dictionaryRouter = router({
   /**
    * Resolves one term to a definition, and caches the result.
@@ -74,7 +120,10 @@ export const dictionaryRouter = router({
       const cached = await db.query.dictionaryEntry.findFirst({
         where: eq(dictionaryEntry.term, normalizedTerm),
       });
-      if (cached) return cached;
+      // An already-enriched row returns straight out of enrichOnce, so the
+      // warm path stays a single read. A row cached before enrichment existed
+      // (or by the seed) picks it up here on its next lookup.
+      if (cached) return enrichOnce(cached);
 
       // 2. Miss: ask Datamuse.
       let payload: unknown;
@@ -112,10 +161,13 @@ export const dictionaryRouter = router({
         .onConflictDoNothing({ target: dictionaryEntry.term })
         .returning();
 
-      return (
+      const entry =
         inserted ??
-        (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, normalizedTerm) })) ??
-        null
-      );
+        (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, normalizedTerm) }));
+
+      // 4. Enrich it, once ever. Step 2 already cost a round trip, so the
+      //    reader is waiting either way; every later lookup of this term skips
+      //    both (§8.3).
+      return entry ? enrichOnce(entry) : null;
     }),
 });

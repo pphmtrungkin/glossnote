@@ -267,17 +267,42 @@ export const wordRouter = router({
       return rows;
     }),
 
+  /**
+   * Edits one captured word. Every field is optional and only what the caller
+   * sends is written, so a flashcard stamping `reviewed` cannot blank the note
+   * the user typed on the same row.
+   *
+   * `mastered` and `reviewed` both carry timestamps the client never sends —
+   * the server owns them, so a device with a wrong clock (or an offline
+   * capture replayed days later) cannot backdate a review.
+   */
   update: protectedProcedure
     .input(
       z.object({
         id: z.string(),
         definitionOverride: z.string().optional(),
+        // Free-form annotation alongside the definition rather than replacing
+        // it (schema/word.ts). Private by construction: it never reaches the
+        // aggregate, which is what keeps reading context out of suggestions.
+        personalNote: z.string().optional(),
         mastered: z.boolean().optional(),
+        // A flashcard turn, not a value: the client says "I just reviewed
+        // this" and the server stamps when. UserFlow §7 — mastered words
+        // deprioritize, reviewed ones rotate to the back.
+        reviewed: z.literal(true).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const changes: Partial<{ definitionOverride: string; mastered: boolean; masteredAt: Date | null }> = {};
+      const changes: Partial<{
+        definitionOverride: string;
+        personalNote: string;
+        mastered: boolean;
+        masteredAt: Date | null;
+        lastReviewedAt: Date;
+      }> = {};
       if (input.definitionOverride !== undefined) changes.definitionOverride = input.definitionOverride;
+      if (input.personalNote !== undefined) changes.personalNote = input.personalNote;
+      if (input.reviewed) changes.lastReviewedAt = new Date();
       if (input.mastered !== undefined) {
         changes.mastered = input.mastered;
         changes.masteredAt = input.mastered ? new Date() : null;

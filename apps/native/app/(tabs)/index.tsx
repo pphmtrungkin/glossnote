@@ -76,7 +76,7 @@ export default function ShelfScreen() {
     trpc.folder.create.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
   );
   const updateStatus = useMutation(
-    trpc.folder.updateStatus.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
+    trpc.folder.update.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
   );
   const deleteFolder = useMutation(
     trpc.folder.delete.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),

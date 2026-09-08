@@ -25,6 +25,23 @@ export function createAuth(db: typeof defaultDb = defaultDb) {
     emailAndPassword: {
       enabled: true,
     },
+    user: {
+      // UserFlow §8: "manage account (email, password, delete account)".
+      // Off by default in Better Auth, so without this the settings screen has
+      // nothing to call. Every domain table references `user.id` with
+      // `onDelete: "cascade"`, so removing the row takes the folders, words and
+      // preferences with it — captures already contributed to the crowdsourced
+      // counts disappear from those counts too, which is the correct reading of
+      // "delete my data".
+      //
+      // No `sendDeleteAccountVerification`: that path needs an email sender,
+      // and this app has none. Better Auth's other two gates cover us — the
+      // caller must pass their current password, or hold a session fresher
+      // than `freshAge` (1 day). Changing an *email* is the one account action
+      // still missing for the same reason: it cannot complete without a
+      // verification mail.
+      deleteUser: { enabled: true },
+    },
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     advanced: {

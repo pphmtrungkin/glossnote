@@ -67,12 +67,38 @@ export const folderRouter = router({
       }
     }),
 
-  updateStatus: protectedProcedure
-    .input(z.object({ id: z.string(), status: folderStatus }))
+  /**
+   * Renames a folder and/or moves its status chip. Both fields are optional so
+   * the shelf's status chips send only `status`, exactly as they did when this
+   * was `updateStatus`.
+   *
+   * `title` is the folder's own label, not the book's: it is denormalized from
+   * `book.title` at creation and diverges deliberately after ("Dune — book
+   * club"). Renaming never touches the shared `book` row, which every other
+   * reader of that book joins to.
+   *
+   * There is still no way to change `bookId` — see the aggregate note in
+   * CLAUDE.md: `word.bookId` is snapshotted at capture time, so relinking a
+   * folder would strand its existing words unless the same transaction moved
+   * them too.
+   */
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        title: z.string().min(1).optional(),
+        status: folderStatus.optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const [updated] = await db
         .update(folder)
-        .set({ status: input.status })
+        .set({
+          ...(input.title !== undefined && { title: input.title }),
+          ...(input.status !== undefined && { status: input.status }),
+          // Also keeps the SET clause non-empty when a caller sends neither.
+          updatedAt: new Date(),
+        })
         .where(ownedBy(folder, input.id, ctx.session.user.id))
         .returning();
       return assertOwned(updated, "Folder");

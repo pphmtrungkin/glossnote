@@ -24,6 +24,7 @@ import {
   normalizeTerm,
 } from "@better-vocab/domain";
 import { book } from "@better-vocab/db/schema/book";
+import { env } from "@better-vocab/env/server";
 import { mapSearchResults } from "./routers/book";
 import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
@@ -334,6 +335,62 @@ assert.equal(linkedWord!.definitionOverride, null, "the server's answer supersed
 await db.delete(dictionaryEntry).where(eq(dictionaryEntry.id, "smoke_dict_lookup"));
 ok("word.create links a server-resolved entry instead of storing an override");
 
+// ---- AI enrichment: at most one call per term, ever ----------------------
+// Enrichment is keyed by term on the shared row, never by user — that is what
+// holds the spec's cost target (§8.3: one unique word, at most one AI call,
+// across the entire user base). `enrichedAt` is both the marker and the claim.
+//
+// Like the Hardcover section, this never calls the provider: the assertions
+// below are the unconfigured path, which is also the failure path. A key in
+// the environment would make the run cost money and depend on the network, so
+// it is skipped instead.
+await db.insert(dictionaryEntry).values({
+  id: "smoke_dict_enrich",
+  term: "eldritch",
+  definition: "Strange in a way that inspires fear; otherworldly.",
+  source: "dictionary_api",
+});
+if (env.ANTHROPIC_API_KEY) {
+  ok("enrichment path skipped: ANTHROPIC_API_KEY is set and db:smoke makes no external calls");
+} else {
+  const unenriched = await api.dictionary.lookup({ term: "  Eldritch " });
+  assert.equal(unenriched!.id, "smoke_dict_enrich", "a term already in the shared cache is served from it");
+  assert.equal(
+    unenriched!.definition,
+    "Strange in a way that inspires fear; otherworldly.",
+    "the AI pass adds columns; it never rewrites the deterministic definition",
+  );
+  assert.equal(
+    unenriched!.enrichedAt,
+    null,
+    "an enrichment that cannot run releases its claim, so the term can be enriched later",
+  );
+  assert.equal(unenriched!.exampleSentence, null, "and leaves no half-filled row behind");
+  assert.equal(unenriched!.source, "dictionary_api", "source only becomes ai_enhanced once enrichment lands");
+  ok("a lookup still resolves when enrichment is unavailable, and stays retryable");
+}
+
+// A row that has already been through the pass is returned untouched: this is
+// the guard that stops every later reader of the word buying another call.
+await db
+  .update(dictionaryEntry)
+  .set({
+    enrichedAt: new Date(),
+    exampleSentence: "The house had an eldritch stillness about it.",
+    usageNote: "Literary; mostly in horror writing.",
+    source: "ai_enhanced",
+  })
+  .where(eq(dictionaryEntry.id, "smoke_dict_enrich"));
+const alreadyEnriched = await api.dictionary.lookup({ term: "ELDRITCH" });
+assert.ok(alreadyEnriched!.enrichedAt instanceof Date, "an enriched row keeps its stamp");
+assert.equal(alreadyEnriched!.exampleSentence, "The house had an eldritch stillness about it.");
+assert.equal(alreadyEnriched!.usageNote, "Literary; mostly in horror writing.");
+ok("an enriched term is served from the shared row, never enriched twice");
+
+// The shared cache is global rather than seed-scoped, so this row goes back
+// out again — a re-run must start cold or it stops exercising the claim.
+await db.delete(dictionaryEntry).where(eq(dictionaryEntry.id, "smoke_dict_enrich"));
+
 // ---- suggestions: shared counts, private definitions ---------------------
 // A second reader of the same book, so there is a population to aggregate.
 const OTHER_ID = "smoke_user_other";
@@ -457,6 +514,32 @@ assert.equal(mastered!.mastered, true);
 assert.ok(mastered!.masteredAt instanceof Date, "masteredAt is stamped alongside mastered");
 assert.equal((await api.word.update({ id: created!.id, mastered: false }))!.masteredAt, null, "unmastering clears the timestamp");
 ok("word.update sets/clears masteredAt with mastered");
+
+// A note and a review stamp are separate axes from the definition: a flashcard
+// turn must not blank the note, and neither may touch definitionOverride.
+const noted = await api.word.update({ id: created!.id, personalNote: "Mum uses this after storms." });
+assert.equal(noted!.personalNote, "Mum uses this after storms.");
+assert.equal(noted!.definitionOverride, "Rain smell.", "a note is stored alongside the definition, not instead of it");
+const reviewed = await api.word.update({ id: created!.id, reviewed: true });
+assert.ok(reviewed!.lastReviewedAt instanceof Date, "the server stamps the review time, the client only says it happened");
+assert.equal(reviewed!.personalNote, "Mum uses this after storms.", "a review turn leaves every other field alone");
+assert.equal(reviewed!.mastered, false, "and reviewing is not mastering");
+ok("word.update writes personal notes and review stamps without clobbering the rest");
+
+// ---- rename --------------------------------------------------------------
+// The folder's own label, not the book's: it diverges from book.title on
+// purpose, and renaming must never reach the shared book row other readers of
+// that book join to.
+const renamed = await api.folder.update({ id: free1.id, title: "Scratch A (book club)" });
+assert.equal(renamed.title, "Scratch A (book club)");
+assert.equal(renamed.status, "misc", "a rename leaves the status chip where it was");
+assert.equal((await api.folder.update({ id: free1.id, status: "finished" })).title, "Scratch A (book club)", "and a status change leaves the name");
+await rejectsWith(
+  () => caller("someone_else").folder.update({ id: free1.id, title: "mine now" }),
+  /Folder not found/,
+  "renaming another user's folder must 404, not report success",
+);
+ok("folder.update renames and re-files, scoped to the owner");
 
 // ---- cascade -------------------------------------------------------------
 assert.deepEqual(await api.folder.delete({ id: free1.id }), { id: free1.id }, "delete returns the row it removed");
