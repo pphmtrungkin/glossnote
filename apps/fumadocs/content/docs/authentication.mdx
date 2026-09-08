@@ -13,6 +13,7 @@ betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
   trustedOrigins: [env.CORS_ORIGIN, "glossnote://", "exp://", "http://localhost:8081"],
   emailAndPassword: { enabled: true },
+  user: { deleteUser: { enabled: true } },
   plugins: [expo()],
 });
 ```
@@ -20,6 +21,7 @@ betterAuth({
 - **`drizzleAdapter`** points Better Auth at our own Postgres database and our own `user`/`session`/`account`/`verification` tables (`packages/db/src/schema/auth.ts`) instead of managing its own separate database. Better Auth generates the *shape* of those tables, but they live in our schema, migrate alongside everything else, and are queryable with the same Drizzle client as every other table.
 - **`emailAndPassword: { enabled: true }`** is the only sign-in method currently wired up. The product flow doc mentions magic link and OAuth as options — neither is configured yet. If you go looking for them and don't find them, that's not a bug, it's just not built.
 - **`expo()` plugin** is what makes auth work on a mobile app instead of a browser at all. A normal web session relies on the browser automatically attaching cookies to every request; a React Native app has no such thing. This plugin adds the deep-link handshake and secure-storage-backed session handling that Expo needs.
+- **`user.deleteUser`** is off by default in Better Auth; turning it on is what gives a settings screen something to call. See [Deleting an account](#deleting-an-account) below for what it takes with it.
 - **`trustedOrigins`** includes the app's custom URL scheme (`glossnote://`) and Expo's dev scheme (`exp://`) — without these, Better Auth would reject the redirect that completes login on a device.
 
 ## How a session actually reaches your code
@@ -39,8 +41,22 @@ So the mental model is: authentication is resolved once, centrally, before your 
 
 One detail that trips people up: a mobile `fetch` call doesn't automatically send cookies the way a browser tab does. So the tRPC client (`apps/native/utils/trpc.ts`) explicitly reads the current session cookie via `authClient.getCookie()` and attaches it as a `Cookie` header on every request — on web, it instead just sets `credentials: "include"` and lets the browser handle it. Same backend, two different plumbing strategies, because "web" and "native" don't share a network stack the way you might assume.
 
+## Deleting an account
+
+The user flow requires it ("manage account — email, password, delete account"), and it is now enabled. Better Auth will only honour the request if the caller proves who they are one of two ways:
+
+| Gate | When it applies |
+| --- | --- |
+| The current password | `authClient.deleteUser({ password })` — the normal path for an email/password account |
+| A **fresh** session | `authClient.deleteUser()` with no password, if they signed in within `session.freshAge` (1 day by default) |
+
+There is deliberately no `sendDeleteAccountVerification` callback: that third path needs an email sender, and this app has none. It's the path OAuth users would need — worth remembering if a social provider is ever configured, since those accounts have no password to check.
+
+What deletion actually removes is decided by the schema, not by a cleanup routine. Every domain table references `user.id` with `ON DELETE CASCADE`, so removing the row takes that reader's folders, words and preferences with it — and because the crowdsourced aggregate is a live `COUNT(DISTINCT user_id)` over `word` rather than a stored counter, their contributions leave the shared counts at the same moment. Nothing to decrement, nothing left pointing at a user who no longer exists. That's a deliberate benefit of [not materializing the aggregate](/docs/data-model#worked-example-logging-a-word).
+
 ## What's not built yet
 
 - Magic link sign-in
 - OAuth (Google/Apple/etc.)
-- Account deletion — Better Auth supports this via configuration, but it isn't turned on
+- **Changing an email.** Better Auth's `changeEmail` sends a verification mail to the new address and won't complete without it — same blocker as delete-account verification. Changing a *password* already works (`authClient.changePassword`), it just has no screen.
+- No account screen calls any of this yet; see [Implementation status](/docs/implementation-status).

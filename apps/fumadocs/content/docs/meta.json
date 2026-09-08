@@ -6,6 +6,7 @@
     "api-layer",
     "authentication",
     "book-search",
+    "ai-enrichment",
     "offline-dictionary",
     "implementation-status",
     "changelog"

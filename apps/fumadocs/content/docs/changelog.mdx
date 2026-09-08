@@ -7,6 +7,28 @@ Notable changes to the codebase, newest first. This tracks *decisions and their 
 
 ## Unreleased
 
+### The rest of the server: AI enrichment, notes, reviews, renames, account deletion
+
+Every column and every flow section that had a server-side half missing now has one. What's left in [Implementation status](/docs/implementation-status) is screens, an asset, and two library choices.
+
+**AI enrichment, once per word, for everyone** ([new docs page](/docs/ai-enrichment)). `dictionary.lookup` now finishes by adding an example sentence and a usage note to the shared `dictionaryEntry` row. `exampleSentence`, `usageNote` and `enrichedAt` had been schema with no producer since the first migration.
+
+`enrichedAt` is both the marker and the lock: the claim is a conditional update (`SET enriched_at = now() WHERE enriched_at IS NULL`) taken *before* the call, so two readers hitting the same brand-new word buy one enrichment between them rather than one each. That is what makes the spec's cost target — each unique word triggers at most one AI call across the entire user base — true under concurrency rather than only on paper. A failed call releases the claim, so a timeout costs the term nothing worse than staying plain until its next lookup.
+
+The provider sits behind one function, `enrichDefinition` (`packages/api/src/enrich.ts`), with structured output validated against a Zod schema — swapping model or vendor touches that file and nothing else, and never the tRPC contract. A small/fast model tier on purpose: an example sentence is not frontier-reasoning work. `ANTHROPIC_API_KEY` is server-only (the Expo app never talks to a provider) and **optional** — without it, lookups resolve and cache base definitions exactly as before, they simply never gain a sentence. Every failure mode returns the base row, because enrichment is only ever an upgrade on a definition the reader already has; it must not be able to turn a working lookup into a broken screen.
+
+The prompt requires a neutral invented sentence and forbids referencing a plot, character, or setting. A sentence borrowed from the book a reader is halfway through is a spoiler.
+
+**Three columns got their writers.** `word.personalNote` (an annotation *alongside* the definition, not replacing it) and `word.lastReviewedAt` (stamped by `word.update({ reviewed: true })`, so a flashcard turn has somewhere to sync) were both schema-only. Each field of `word.update` is written only when sent, so a review turn cannot blank a note typed on the same row, and the timestamps are the server's — a device with a wrong clock cannot backdate a review.
+
+**Account deletion.** `deleteUser` is enabled in Better Auth, gated on the caller's password or a session fresher than a day. Every domain table references `user.id` with `ON DELETE CASCADE`, so the row takes the folders, words and preferences with it — and those captures leave the crowdsourced counts too, which is the right reading of "delete my data". Changing an *email* stays unbuilt for a concrete reason: Better Auth requires a verification mail, and this app has no email sender.
+
+<Callout type="warn">
+**Breaking:** `folder.updateStatus` is now `folder.update`, taking an optional `title` alongside the optional `status`. The status chips call it exactly as before; the rename is the new half. A folder's `title` is its own label, denormalized from `book.title` at creation and free to diverge after — renaming never touches the shared `book` row other readers of that book join to. There is still no way to change a folder's `bookId`, for the reason recorded in the [data model](/docs/data-model): `word.bookId` is snapshotted at capture time.
+</Callout>
+
+**Removed: `privateData`.** A scaffold procedure that returned the session user to prove auth worked. `db:smoke` proves it now, from both sides of the ownership boundary.
+
 ### Shared domain package, one definition resolver, one ownership rule
 
 An architecture review turned up the same logic written in several places, each copy free to drift from the others. All of it now has a single home.

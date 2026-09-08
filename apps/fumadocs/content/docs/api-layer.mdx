@@ -24,7 +24,6 @@ Every feature router follows the same shape: a file in `packages/api/src/routers
 // packages/api/src/routers/index.ts
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => "OK"),
-  privateData: protectedProcedure.query(({ ctx }) => ({ user: ctx.session.user })),
   book: bookRouter,
   dictionary: dictionaryRouter,
   folder: folderRouter,
@@ -46,6 +45,7 @@ The mapping from Hardcover's Typesense payload to our `book` shape is exported s
 1. Check `dictionaryEntry` for the normalized term. If present, return it — this is what keeps both the API quota and future AI cost flat, since every later reader of that term is free.
 2. On a miss, ask [Datamuse](https://www.datamuse.com/api/) (`?sp=<term>&md=d&max=5`). No API key is required before 1 January 2027; after that a free key allows 100,000 requests per day. Datamuse asks that apps acknowledge it in their documentation — this page is that acknowledgement, and their definitions come from Wiktionary and WordNet.
 3. Save the result and return it.
+4. Enrich it once — an AI example sentence and usage note, written onto the same shared row.
 
 ### The exact-word check is the point, not a detail
 
@@ -61,6 +61,14 @@ A miss returns `null`, not an error. Words invented for a novel are a normal cas
 
 The same fuzzy behaviour is worth keeping in mind for later — it is a ready-made "did you mean…?" for voice mishears, from the same endpoint.
 
+### Step 4 is the AI pass
+
+Enrichment adds an example sentence and a usage note to the *same shared row*, leaving the base definition exactly as the dictionary gave it. It happens at most once per term across the entire user base, and `enrichedAt` is both the marker and the lock that makes that true under concurrency — the claim is a conditional update taken *before* the call, so two readers hitting the same brand-new word buy one enrichment between them rather than one each.
+
+The provider lives behind a single function, `enrichDefinition` (`packages/api/src/enrich.ts`), and `ANTHROPIC_API_KEY` is server-only and optional: without it, lookups resolve and cache base definitions exactly as before, and every failure returns the base row rather than breaking the lookup.
+
+See [AI enrichment](/docs/ai-enrichment) for the cost model, the claim, the spoiler rule baked into the prompt, and what swapping providers involves.
+
 ## The `folder` router
 
 `packages/api/src/routers/folder.ts` — everything a user does to their own reading folders.
@@ -69,10 +77,10 @@ The same fuzzy behaviour is worth keeping in mind for later — it is a ready-ma
 | --- | --- |
 | `list` | All folders belonging to the caller, each with its linked `book` row attached (`with: { book: true }`) |
 | `create` | Insert a folder — optionally upserting a picked Hardcover book and linking it; `status` defaults to `"reading"` |
-| `updateStatus` | Change `reading` / `finished` / `misc` |
+| `update` | Rename the folder, move it between `reading` / `finished` / `misc`, or both |
 | `delete` | Remove a folder |
 
-Notice there's no separate "check this folder belongs to the caller" step before `updateStatus` or `delete` — ownership is baked into the `WHERE` clause instead, via one shared predicate in `packages/api/src/ownership.ts`:
+Notice there's no separate "check this folder belongs to the caller" step before `update` or `delete` — ownership is baked into the `WHERE` clause instead, via one shared predicate in `packages/api/src/ownership.ts`:
 
 ```ts
 .where(ownedBy(folder, input.id, ctx.session.user.id))   // and(eq(id), eq(userId))
@@ -119,7 +127,7 @@ No settings screen calls these yet.
 | `create` | Log one word, the moment the reader taps Save |
 | `createMany` | Drain the device's offline queue in one round trip — see below |
 | `suggestions` | Words other readers of this book saved that the caller doesn't have yet — counts only, no definitions |
-| `update` | Edit a personal definition override, or toggle `mastered` |
+| `update` | Edit a personal definition override or note, toggle `mastered`, or stamp a review |
 | `delete` | Remove a word |
 
 `create` and `createMany` both delegate to one private `captureWord`, so the rules below — especially "a client never writes `dictionary_entry`" — cannot hold for the live save and quietly lapse for the offline flush. Walking through it, because it's doing more than it looks like at first glance:

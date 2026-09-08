@@ -1,0 +1,87 @@
+---
+title: AI enrichment
+description: The example sentence and usage note added to a shared definition, once per word for everyone
+---
+
+A definition tells you what a word means. It doesn't tell you whether anyone still says it, or what it looks like in a sentence. That second half is generated: after `dictionary.lookup` resolves a base definition, it adds an **example sentence** and a **usage note** to the same shared `dictionaryEntry` row.
+
+```ts
+dictionaryEntry: {
+  term: "eldritch",
+  definition: "Strange in a way that inspires fear; otherworldly.",   // Datamuse — deterministic
+  exampleSentence: "The house had an eldritch stillness about it.",   // generated
+  usageNote: "Literary; mostly in horror writing.",                   // generated
+  source: "ai_enhanced",
+  enrichedAt: 2026-09-08T...,
+}
+```
+
+The base definition is never rewritten. Enrichment only ever adds the two columns beside it, which is why a failed enrichment is a non-event rather than a broken lookup.
+
+## One call per word, for everyone
+
+This is the constraint the whole design is built around, and it comes straight from the spec: *each unique word triggers at most one AI enrichment call across the entire user base*.
+
+It holds because the row is keyed by **term**, not by user. `dictionaryEntry` is a shared cache with no relationship to any single reader (see [Data model](/docs/data-model#why-definitions-live-in-their-own-table-dictionaryentry)) — so the five-hundredth reader to look up "ephemeral" is answered from the same row as the first, and costs nothing. Because lookups cluster around popular books, a busy title warms the cache for every later reader of it.
+
+`enrichedAt` is what makes "at most one" true in practice. It is both the marker and the lock, and the claim is taken **before** the call, not after:
+
+```ts
+// packages/api/src/routers/dictionary.ts
+const [claimed] = await db
+  .update(dictionaryEntry)
+  .set({ enrichedAt: new Date() })
+  .where(and(eq(dictionaryEntry.id, entry.id), isNull(dictionaryEntry.enrichedAt)))
+  .returning();
+if (!claimed) return entry;   // someone else is already paying for this word
+```
+
+Two readers who hit the same brand-new word at the same moment buy one enrichment between them, not one each: exactly one of them wins that conditional update, and the loser returns the base definition immediately. Checking `enrichedAt` and *then* calling would satisfy the rule on paper and double the bill under concurrency.
+
+A call that fails releases the claim (`enrichedAt` back to `null`), so a timeout costs the term nothing worse than staying plain until someone looks it up again. The row is never left half-filled: a blank sentence or note is rejected rather than stored, because a half-filled row looks enriched and would never be retried.
+
+## Why this is server-side
+
+The same rule as [Book search](/docs/book-search#why-this-has-to-be-server-side), for the same reason. `ANTHROPIC_API_KEY` lives in `apps/server/.env`, validated in `packages/env/src/server.ts`, and is **never** an `EXPO_PUBLIC_*` variable — a key shipped in the Expo bundle is extractable from the app binary, and one misbehaving client would spend everyone's budget. The app calls its own tRPC procedure; the server calls the provider. It never talks to an AI provider directly, and there is no procedure that would let it pass a prompt through.
+
+The key is **optional**, like Hardcover's. Without one, `dictionary.lookup` still resolves definitions through Datamuse and still caches them — words simply never gain a sentence. Enrichment is an upgrade on top of a definition the reader already has, so it must never be able to turn a working lookup into a failed one.
+
+| What went wrong | What the reader gets |
+| --- | --- |
+| No `ANTHROPIC_API_KEY` configured | The base definition |
+| Provider down, or slower than 15s | The base definition; the claim is released, so the next lookup retries |
+| The model declines, or the output doesn't validate | The base definition |
+| A field comes back blank | The base definition — no half-filled row |
+
+## The prompt has one hard rule
+
+The example sentence is **invented, never borrowed**. The prompt requires a neutral everyday sentence and explicitly forbids referencing a plot, character, or setting.
+
+That isn't stylistic. Readers log words *mid-book*, and a sentence lifted from the book they're halfway through is a spoiler — the same concern that keeps context sentences out of [crowdsourced discovery](/docs/api-layer#wordsuggestions). Suggestions are spoiler-safe structurally, because no column in that result could carry a sentence. Here the column exists, so the rule lives in the prompt instead.
+
+The usage note is capped at fifteen words and asked to say something a reader could not have read off the definition itself — register, or how rare the word is.
+
+## Swapping the provider
+
+Everything about the provider is behind one function, `enrichDefinition` in `packages/api/src/enrich.ts`. It takes a term and a definition and returns `{ exampleSentence, usageNote }` or `null`. Nothing else in the codebase imports an SDK, knows a model name, or handles a provider error.
+
+```ts
+export async function enrichDefinition(term: string, definition: string): Promise<Enrichment | null>
+```
+
+Changing model or vendor is an edit to that file. The tRPC contract doesn't move, no client code changes, and `dictionary.lookup` keeps its claim/release logic regardless of who answers.
+
+Two choices worth knowing:
+
+- **A small, fast model tier** ([Claude Haiku](https://docs.claude.com/en/docs/about-claude/models)), on purpose. An example sentence and a register note are not frontier-reasoning work, and this runs once per unique word across every reader — the spec calls for the cheap tier here and it's the right call.
+- **Structured output**, validated against a Zod schema, rather than parsing prose out of a text response. The two fields are the exact shape of the two nullable columns, so there is nothing to map on the way in and nothing to regex on the way out.
+
+The SDK timeout is 15 seconds with one retry, tighter than the SDK's own defaults, because this happens inside a lookup a reader is waiting on.
+
+## What's verified, and what isn't
+
+`bun run db:smoke` asserts the parts that don't need a provider: that a cached term is served from the shared row, that the base definition is never rewritten, that a failed or unconfigured enrichment releases its claim and leaves no half-filled row, and that an already-enriched row is returned untouched rather than enriched twice.
+
+Those checks **skip themselves** when `ANTHROPIC_API_KEY` is set. Same rule as Hardcover: the smoke test makes no external calls, and a check that spends money on every run is a check people stop running.
+
+So the one thing still unverified is a live call. Set the key, look up a word nobody has resolved yet, and read the row back — `enrichedAt` set, both columns filled, `source` moved to `ai_enhanced`. Nothing renders those two columns in the app yet; `useDefinition` already returns the whole entry, so showing them is a render change, not a server one.
