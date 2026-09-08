@@ -16,12 +16,14 @@
  */
 import assert from "node:assert/strict";
 import {
+  CONTEXT_BLANK,
   CAPTURE_METHODS,
   DICTIONARY_SOURCES,
   FOLDER_STATUSES,
   OFFLINE_DICTIONARY_TIERS,
   PREFERENCE_DEFAULTS,
   normalizeTerm,
+  parseContext,
 } from "@better-vocab/domain";
 import { book } from "@better-vocab/db/schema/book";
 import { env } from "@better-vocab/env/server";
@@ -336,6 +338,28 @@ assert.equal(linkedWord!.definitionOverride, null, "the server's answer supersed
 await db.delete(dictionaryEntry).where(eq(dictionaryEntry.id, "smoke_dict_lookup"));
 ok("word.create links a server-resolved entry instead of storing an override");
 
+// ---- the context format --------------------------------------------------
+// One stored string has to serve a context panel and a cloze card, and three
+// packages read it: the quiz builder, the app's panel, and enrichment's own
+// validation. A drift between them puts the blank in the wrong place.
+const parsed = parseContext("The house had an {eldritch} stillness about it.")!;
+assert.equal(parsed.sentence, "The house had an eldritch stillness about it.", "the panel gets prose");
+assert.equal(parsed.answer, "eldritch", "the reveal gets the word");
+assert.equal(parsed.prompt, `The house had an ${CONTEXT_BLANK} stillness about it.`, "the card gets a blank");
+assert.ok(!parsed.prompt.includes("eldritch"), "a card must never ship the answer inside its own prompt");
+
+// The reason the word is marked rather than searched for at read time: the
+// sentence rarely contains the term as it was captured.
+assert.equal(parseContext("She was {running} late again.")!.answer, "running", "inflection is preserved");
+assert.equal(parseContext("{Sietches} are carved into rock.")!.answer, "Sietches", "so is sentence casing");
+
+assert.equal(parseContext("A sentence with no marked word at all."), null, "no braces is not a context");
+assert.equal(parseContext("Both {this} and {that} are marked."), null, "two spans have no single answer");
+assert.equal(parseContext("An empty {} span."), null, "an empty span has no answer");
+assert.equal(parseContext("{eldritch}"), null, "a bare word is a blank with nothing to reason from");
+assert.equal(parseContext("Unbalanced {braces here."), null, "unbalanced braces are not a context");
+ok("a context parses into panel prose, a quiz prompt, and the inflected answer");
+
 // ---- cheap models wrap their answers ------------------------------------
 // The repair the enrichment call falls back to when validation fails. GLM
 // returns the right two fields nested under a key it invented on roughly half
@@ -533,6 +557,64 @@ const rejectedBatch = await caller("someone_else").word.createMany({
 });
 assert.equal(rejectedBatch[0]!.status, "dropped", "another user's folder is never writable through the batch");
 ok("createMany scopes folder ownership to the caller");
+
+// ---- the quiz ------------------------------------------------------------
+// Cards are built from the shared, term-keyed contexts, so a quiz costs no AI
+// call of its own. The seed is deliberately shaped to exercise every reason a
+// word is left out: of the six seeded words only two have an entry carrying
+// contexts, and the rest are excluded for a different reason each.
+const cards = await api.word.quiz({});
+assert.deepEqual(
+  cards.map((card) => card.term).sort(),
+  ["prescience", "sietch"],
+  "only words whose resolved entry actually carries contexts can produce a card",
+);
+
+const sietchCard = cards.find((card) => card.term === "sietch")!;
+assert.equal(sietchCard.prompt, `They retreated to the ${CONTEXT_BLANK} before the storm arrived.`);
+assert.equal(sietchCard.answer, "sietch", "the answer is the form the sentence uses");
+assert.ok(!sietchCard.prompt.includes("sietch"), "the prompt cannot contain the word being guessed");
+assert.equal(sietchCard.definition, "A Fremen cave community; a place of refuge.");
+assert.equal(sietchCard.wordId, "seed_word_sietch", "a card carries the word id `reviewed` is stamped on");
+ok("word.quiz blanks the term out of a shared context and reveals the definition");
+
+// Each of these is excluded for its own reason, and all four are seeded rows:
+// no resolved entry (gom jabbar, apophenia), an entry with no contexts
+// (iridescent), and mastered (lemniscate) — which is what mastering is for.
+for (const term of ["gom jabbar", "apophenia", "iridescent", "lemniscate"]) {
+  assert.ok(!cards.some((card) => card.term === term), `${term} must not be quizzed`);
+}
+ok("mastered words, unresolved words, and context-free entries are all left out");
+
+assert.deepEqual(
+  await api.word.quiz({ folderId: "seed_folder_pale_fire" }),
+  [],
+  "a folder whose words are mastered or context-free yields an empty run, not an error",
+);
+assert.equal((await api.word.quiz({ folderId: "seed_folder_dune" })).length, 2, "and a folder filter scopes the run");
+assert.equal((await caller("someone_else").word.quiz({})).length, 0, "the quiz only ever draws on the caller's own words");
+ok("quiz runs scope to a folder and to their owner");
+
+// Least-recently-reviewed first, never-reviewed ahead of those — so a session
+// opens on what the reader has seen least.
+// Both seeded words were inserted in one statement and so share `createdAt`
+// exactly; the id tie-break is what stops that pair from swapping places
+// between runs, which is how this assertion caught the missing sort key.
+assert.equal(
+  (await api.word.quiz({ limit: 1 }))[0]!.term,
+  "prescience",
+  "with nothing reviewed the order is total and stable, not whatever the heap returns",
+);
+await api.word.update({ id: "seed_word_prescience", reviewed: true });
+assert.equal(
+  (await api.word.quiz({ limit: 1 }))[0]!.term,
+  "sietch",
+  "reviewing a word moves it behind the ones still unseen",
+);
+// Hand the seed back exactly as found: `reviewed` is the one assertion here
+// that writes to a seeded row.
+await db.update(word).set({ lastReviewedAt: null }).where(eq(word.id, "seed_word_prescience"));
+ok("a reviewed card drops to the back of the queue");
 
 // ---- update --------------------------------------------------------------
 const mastered = await api.word.update({ id: created!.id, mastered: true, definitionOverride: "Rain smell." });

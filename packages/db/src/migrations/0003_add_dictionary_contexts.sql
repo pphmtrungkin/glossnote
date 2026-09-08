@@ -1,0 +1,1 @@
+ALTER TABLE "dictionary_entry" ADD COLUMN "contexts" text[] DEFAULT '{}' NOT NULL;

@@ -1,3 +1,4 @@
+import { isValidContext, parseContext } from "@better-vocab/domain";
 import { env } from "@better-vocab/env/server";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -40,30 +41,48 @@ const ENRICHMENT_MODEL = "zai/glm-4.7-flashx";
 // someone looks it up again.
 const ENRICHMENT_TIMEOUT_MS = 15_000;
 
+/** How many contexts to ask for. Three fills a panel and a short quiz run. */
+const CONTEXT_COUNT = 3;
+
 const SYSTEM_PROMPT = [
   "You add usage context to a dictionary definition for a vocabulary app used by readers.",
   "",
-  "exampleSentence: one natural sentence, at most 25 words, using the word in the sense given.",
-  "Invent a neutral everyday sentence. Never quote or paraphrase a book, and never reference a",
-  "plot, character, or setting — readers log words mid-book and a borrowed sentence can spoil it.",
+  `contexts: exactly ${CONTEXT_COUNT} sentences, each at most 25 words, showing the word in the sense given.`,
+  "Wrap the word itself in braces wherever it appears: The house had an {eldritch} stillness about it.",
+  "Mark it exactly once per sentence, and inflect it naturally — {running}, {sietches} — rather than",
+  "forcing the dictionary form. Put the braces around the word only, never around the whole phrase.",
+  "",
+  "Each sentence must give a reader enough around the word to infer its meaning without being told:",
+  "these are used as fill-in-the-blank cards, so a sentence that still makes sense with any word in",
+  "the gap is a wasted card. Vary them — different subjects, and different registers or senses where",
+  "the word has more than one.",
+  "",
+  "Invent every sentence. Never quote or paraphrase a book, and never reference a plot, character, or",
+  "setting — readers log words mid-book and a borrowed sentence can spoil it.",
   "",
   "usageNote: at most 15 words on register or frequency, e.g. \"Mostly literary; rare in speech.\"",
   "Say something a learner could not read off the definition itself.",
 ].join("\n");
 
-// Deliberately two plain strings: this is the exact shape of the two nullable
-// columns on dictionary_entry, so there is nothing to map on the way in.
+// What the model is asked for. `exampleSentence` is deliberately absent: it is
+// derived from the first context below rather than generated separately, so
+// there is one artifact to get right instead of two that can disagree.
 const enrichmentSchema = z.object({
-  exampleSentence: z.string(),
+  contexts: z.array(z.string()),
   usageNote: z.string(),
 });
 
-export type Enrichment = z.infer<typeof enrichmentSchema>;
+/** What gets written to the shared row — the exact shape of its columns. */
+export type Enrichment = {
+  contexts: string[];
+  exampleSentence: string;
+  usageNote: string;
+};
 
 /**
  * Unwraps a model answer that arrived one level too deep.
  *
- * Cheap models wrap: GLM returns `{"answer": {exampleSentence, usageNote}}` on
+ * Cheap models wrap: GLM returns `{"answer": {contexts, usageNote}}` on
  * roughly half of calls — the right fields, nested — which fails schema
  * validation and would leave the term un-enriched for no good reason. This runs
  * only after parsing or validation has already failed, so it costs nothing on
@@ -131,13 +150,25 @@ export async function enrichDefinition(term: string, definition: string): Promis
       maxRetries: 1,
     });
 
-    const exampleSentence = object.exampleSentence.trim();
     const usageNote = object.usageNote.trim();
-    // A blank field would occupy the column and make the row look enriched,
-    // which is worse than staying null.
-    if (!exampleSentence || !usageNote) return null;
 
-    return { exampleSentence, usageNote };
+    // Contexts that ignored the brace format are dropped rather than repaired:
+    // a sentence with no marked span has no blank to make, and one this code
+    // guessed at would blank the wrong word. Partial output is still worth
+    // keeping — two good contexts beat discarding the call over a third.
+    const contexts = object.contexts.map((line) => line.trim()).filter(isValidContext);
+
+    // A blank field would occupy the column and make the row look enriched,
+    // which is worse than staying null. No usable context means no quiz card
+    // and no panel, so there is nothing here worth writing.
+    if (!usageNote || contexts.length === 0) return null;
+
+    // The plain-prose form of the first context. Same sentence the panel would
+    // show, minus the braces — which is exactly what this column has always
+    // meant, and now costs no extra generation.
+    const exampleSentence = parseContext(contexts[0]!)!.sentence;
+
+    return { contexts, exampleSentence, usageNote };
   } catch (error) {
     // Covers the whole surface: a schema the model couldn't satisfy, a 402 from
     // a spent budget, a 429, the timeout above, or the gateway being down.

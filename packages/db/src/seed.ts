@@ -125,6 +125,15 @@ async function seed() {
       term: "sietch",
       definition: "A Fremen cave community; a place of refuge.",
       source: "ai_enhanced",
+      // The term is brace-marked so one string serves both the context panel
+      // and a cloze quiz card — see `parseContext` in @better-vocab/domain.
+      // exampleSentence is the first of these with the braces removed, which
+      // is exactly how enrichment derives it.
+      contexts: [
+        "They retreated to the {sietch} before the storm arrived.",
+        "Every {sietch} kept its own water stores, sealed deep in the rock.",
+        "The travellers were welcomed into the {sietch} and given shelter for the night.",
+      ],
       exampleSentence: "They retreated to the sietch before the storm arrived.",
       usageNote: "Coined for Dune; not standard English outside the novel.",
       enrichedAt: new Date(),
@@ -134,6 +143,11 @@ async function seed() {
       term: "prescience",
       definition: "Knowledge of events before they take place; foresight.",
       source: "ai_enhanced",
+      contexts: [
+        "His {prescience} made the ambush feel inevitable rather than surprising.",
+        "She spoke with a {prescience} that unsettled everyone at the table.",
+        "No amount of {prescience} could have prepared them for that announcement.",
+      ],
       exampleSentence: "His prescience made the ambush feel inevitable rather than surprising.",
       usageNote: "Mostly formal or literary; 'foresight' is the everyday equivalent.",
       enrichedAt: new Date(),

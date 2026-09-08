@@ -59,7 +59,7 @@ Here's the question worth sitting with: if 500 users all look up the word "ephem
 
 ```ts
 // schema/dictionary.ts (shape)
-dictionaryEntry: { id, term (unique), definition, exampleSentence?, usageNote?, source: "bundled" | "dictionary_api" | "ai_enhanced", enrichedAt? }
+dictionaryEntry: { id, term (unique), definition, contexts[], exampleSentence?, usageNote?, source: "bundled" | "dictionary_api" | "ai_enhanced", enrichedAt? }
 ```
 
 No — `dictionaryEntry` is a **shared cache**, one row per unique term, with no relationship to any single user. The first time the server resolves "ephemeral" (dictionary API, then AI enrichment), it is saved here, and every later request for that term is answered from this table. No repeat API call, no repeat cost.
@@ -71,6 +71,8 @@ Because of that, `word.dictionaryEntryId` stays `null` until a server-side resol
 `term` here holds the **normalized** form — a lowercased match key, not a display string. Anything joining to this table must normalize first; joining a display-cased `"Serendipity"` silently matches nothing.
 
 AI enrichment (`exampleSentence`, `usageNote`, and `enrichedAt` marking when it last ran) lives on this shared row for the same reason the definition does: it's what holds the spec's cost target that *each unique word triggers at most one AI call across the entire user base*. Enrich once, serve forever. `dictionary.lookup` now writes all three — `enrichedAt` doubling as the claim that keeps concurrent lookups of a new word from buying two enrichments; see [AI enrichment](/docs/ai-enrichment). A per-word example sentence column used to exist alongside it and was removed — one shared row is the whole point, and the fallback chain it created was a branch in two screens for a case nobody had asked for.
+
+`contexts` is a `text[]` of invented sentences with the term brace-marked — `"The house had an {eldritch} stillness about it."` It's an array rather than a table of its own for the same reason `book.authors` is: two or three short strings, always read with the row and never queried individually, so a join would buy nothing. Because it's shared and term-keyed like the definition, the [quiz](/docs/api-layer#wordquiz) built from it costs no AI call of its own — see [AI enrichment](/docs/ai-enrichment#contexts-and-the-cloze-card) for what the braces are doing.
 
 `word.definitionOverride` is the other half of that rule. It holds anything the device supplied — the bundled dictionary's wording, or text the user typed themselves — and only that one user ever sees it. Display always reads `word.definitionOverride ?? word.dictionaryEntry?.definition`.
 

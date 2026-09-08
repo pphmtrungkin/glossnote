@@ -9,7 +9,11 @@ A definition tells you what a word means. It doesn't tell you whether anyone sti
 dictionaryEntry: {
   term: "eldritch",
   definition: "Strange in a way that inspires fear; otherworldly.",   // Datamuse — deterministic
-  exampleSentence: "The house had an eldritch stillness about it.",   // generated
+  contexts: [                                                         // generated
+    "The house had an {eldritch} stillness about it.",
+    "She described an {eldritch} light that none of them could explain.",
+  ],
+  exampleSentence: "The house had an eldritch stillness about it.",   // contexts[0], unmarked
   usageNote: "Literary; mostly in horror writing.",                   // generated
   source: "ai_enhanced",
   enrichedAt: 2026-09-08T...,
@@ -86,6 +90,24 @@ Three choices worth knowing:
 - **15 seconds and one retry**, tighter than the SDK's defaults, because this happens inside a lookup a reader is waiting on.
 
 Gateway model ids are `provider/model` and must match the catalog exactly — a slug invented by analogy will 404. `GET https://ai-gateway.vercel.sh/v1/models` lists every id, needs no auth, and is the way to check a replacement before pasting it into that constant.
+
+## Contexts, and the cloze card
+
+The model is asked for three sentences rather than one, each with the target word **wrapped in braces**:
+
+```
+"The house had an {eldritch} stillness about it."
+```
+
+That marking is what lets one stored string serve two features without either reader guessing where the word sits — the word view strips the braces, and [`word.quiz`](/docs/api-layer#wordquiz) replaces the span with a blank and keeps what was inside as the answer.
+
+Marking beats searching for the term at read time, because the sentence rarely contains the term as it was captured: a context for "run" may say "running", one for "sietch" may capitalise it at the start of a sentence. A search would blank the wrong span, or none at all — and a card whose prompt still contains its own answer is worse than no card. The marked span also gives the reveal the inflected form the reader should have guessed rather than the dictionary headword.
+
+`parseContext` in `@better-vocab/domain` is the single definition of that format, for the same reason `normalizeTerm` lives there: three callers read it — the quiz builder, the app's context panel, and enrichment's own validation on the way in — and a drift between them would put the blank in the wrong place.
+
+Contexts that ignore the format are **dropped rather than repaired**, since a guess at where the word was would blank the wrong one. Partial output still counts: two good contexts beat discarding a call over a third. `exampleSentence` is no longer generated separately — it's the first context with its braces removed, so there is one artifact to get right instead of two that can disagree.
+
+The prompt also asks for sentences that *give the meaning away by context*, which is what makes a card worth answering: a sentence that still reads fine with any word in the gap is a wasted card.
 
 ## Cheap models have quirks; budget for two of them
 
