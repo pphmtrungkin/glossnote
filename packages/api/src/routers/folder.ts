@@ -1,8 +1,9 @@
 import { FOLDER_STATUSES } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { folder } from "@better-vocab/db/schema/book";
+import { word } from "@better-vocab/db/schema/word";
 import { TRPCError } from "@trpc/server";
-import { desc, eq } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { protectedProcedure, router } from "../index";
@@ -21,13 +22,30 @@ function violates(error: unknown, constraint: string) {
 }
 
 export const folderRouter = router({
-  list: protectedProcedure.query(({ ctx }) =>
-    db.query.folder.findMany({
-      where: eq(folder.userId, ctx.session.user.id),
-      with: { book: true },
-      orderBy: desc(folder.createdAt),
-    }),
-  ),
+  /**
+   * Every folder on the shelf, newest first, with its word count.
+   *
+   * The count is one grouped query rather than a subquery per row: the shelf
+   * and the home page both show it, and a folder with no words never appears
+   * in the group-by, which is what the `?? 0` covers.
+   */
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const [folders, counts] = await Promise.all([
+      db.query.folder.findMany({
+        where: eq(folder.userId, ctx.session.user.id),
+        with: { book: true },
+        orderBy: desc(folder.createdAt),
+      }),
+      db
+        .select({ folderId: word.folderId, words: count() })
+        .from(word)
+        .where(eq(word.userId, ctx.session.user.id))
+        .groupBy(word.folderId),
+    ]);
+
+    const byFolder = new Map(counts.map((row) => [row.folderId, row.words]));
+    return folders.map((row) => ({ ...row, wordCount: byFolder.get(row.id) ?? 0 }));
+  }),
 
   // Takes the picked search result, not a bookId: the book row is upserted
   // here so linking is one round trip, and so a client can't hand us an

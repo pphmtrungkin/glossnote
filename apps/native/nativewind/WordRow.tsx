@@ -3,7 +3,7 @@
  *  main action on a screen. Other readers' data is always muted gray.
  */
 import { View, Text, Pressable } from "react-native";
-import { usePalette, masteryColor, type Mastery } from "./theme";
+import { useThemeColors as usePalette, masteryColor, type Mastery } from "./theme";
 
 const STATE_CLASS: Record<Mastery, string> = {
   new: "text-state-new",

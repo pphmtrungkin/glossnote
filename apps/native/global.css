@@ -52,6 +52,10 @@
          scheme spends primary on. */
       --accent: #a8560f; /* primary */
       --accent-foreground: #ffffff; /* primary-content */
+      --accent-deep: #7d3f0a; /* primaryDeep — secondary button text */
+      --accent-soft: #ddb894; /* primarySoft — disabled / muted accent */
+      --accent-pressed: #94490b; /* primaryPressed */
+      --accent-tint: #f2e6da; /* primaryTint — active state bg */
 
       --field-background: #f4f3f0;
       --field-foreground: var(--foreground);
@@ -82,6 +86,10 @@
       --field-shadow:
         0 2px 4px 0 rgba(26, 26, 24, 0.04), 0 1px 2px 0 rgba(26, 26, 24, 0.06),
         0 0 1px 0 rgba(26, 26, 24, 0.06);
+
+      --state-new: #6b6a66;
+      --state-learning: #a8560f;
+      --state-steady: #403f3c;
     }
 
     /* Kindle "White" — paper, not the stock grey. */
@@ -107,6 +115,10 @@
 
       --accent: #3a6ea5;
       --accent-foreground: #ffffff;
+      --accent-deep: #2a5080;
+      --accent-soft: #8fb5d4;
+      --accent-pressed: #2f5a8a;
+      --accent-tint: #e0edf6;
 
       --field-background: #ffffff;
       --field-foreground: var(--foreground);
@@ -137,6 +149,10 @@
       --field-shadow:
         0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
         0 0 1px 0 rgba(0, 0, 0, 0.06);
+
+      --state-new: #6b6660;
+      --state-learning: #3a6ea5;
+      --state-steady: #1b1b1b;
     }
 
     /* Kindle "Sepia" — warm paper, brown ink. */
@@ -162,6 +178,10 @@
 
       --accent: #9a6b3f;
       --accent-foreground: #fff8ea;
+      --accent-deep: #7a5230;
+      --accent-soft: #c4a57a;
+      --accent-pressed: #85603a;
+      --accent-tint: #f5ece0;
 
       --field-background: #fcf5e4;
       --field-foreground: var(--foreground);
@@ -192,6 +212,10 @@
       --field-shadow:
         0 2px 4px 0 rgba(74, 59, 40, 0.05), 0 1px 2px 0 rgba(74, 59, 40, 0.07),
         0 0 1px 0 rgba(74, 59, 40, 0.07);
+
+      --state-new: #8a7855;
+      --state-learning: #9a6b3f;
+      --state-steady: #4a3b28;
     }
 
     /* Kindle "Green" — the pale mint page on newer Paperwhites. */
@@ -217,6 +241,10 @@
 
       --accent: #3f6b3a;
       --accent-foreground: #f2f7ef;
+      --accent-deep: #2d5028;
+      --accent-soft: #7fa97a;
+      --accent-pressed: #356032;
+      --accent-tint: #e4ede2;
 
       --field-background: #e3eddc;
       --field-foreground: var(--foreground);
@@ -247,6 +275,10 @@
       --field-shadow:
         0 2px 4px 0 rgba(38, 51, 35, 0.05), 0 1px 2px 0 rgba(38, 51, 35, 0.07),
         0 0 1px 0 rgba(38, 51, 35, 0.07);
+
+      --state-new: #5f7057;
+      --state-learning: #3f6b3a;
+      --state-steady: #263323;
     }
 
     /*
@@ -277,6 +309,10 @@
 
       --accent: #d99a52; /* primary */
       --accent-foreground: #2a1706; /* primary-content */
+      --accent-deep: #f0c48a; /* primaryDeep */
+      --accent-soft: #5e4429; /* primarySoft */
+      --accent-pressed: #e7ad6a; /* primaryPressed */
+      --accent-tint: #33261a; /* primaryTint */
 
       --field-background: #24211b;
       --field-foreground: var(--foreground);
@@ -301,19 +337,14 @@
       --surface-shadow: 0 0 0 0 transparent inset;
       --overlay-shadow: 0 0 1px 0 rgba(236, 234, 228, 0.15) inset;
       --field-shadow: 0 0 0 0 transparent inset;
+
+      --state-new: #9a958c;
+      --state-learning: #d99a52;
+      --state-steady: #bab5ac;
     }
   }
 }
 
-/*
- * Literata is the reading serif — Bookerly is proprietary to Amazon and can't
- * be redistributed, so this is the closest openly-licensed analogue (SIL OFL,
- * drawn for Google Play Books).
- *
- * React Native doesn't synthesise weights for custom families: each weight
- * registers under its own family name, so bold text needs `font-serif-bold`
- * rather than `font-serif font-bold`.
- */
 /*
  * The Ochre spot scheme's own names, as utilities: `bg-primary`, `text-ink`,
  * `text-state-learning`, `rounded-card`.
@@ -324,9 +355,10 @@
  * Copying the hex here instead would give two spellings of one colour that
  * drift the first time a theme is edited.
  *
- * The second group has no HeroUI counterpart, so it carries values directly;
- * `dark` overrides them below. They are the scheme's own vocabulary — the
- * pressed/tinted variants of the accent, and the three mastery states.
+ * The second group has no HeroUI counterpart as a `--color-*` token, so it
+ * references the `--accent-*` CSS variables defined per variant above.
+ * They are the scheme's own vocabulary — the pressed/tinted variants of the
+ * accent, and the three mastery states.
  */
 @theme {
   --color-base: var(--background);
@@ -340,40 +372,53 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
 
-  --color-primary-pressed: #94490b;
-  --color-primary-deep: #7d3f0a;
-  --color-primary-tint: #f2e6da;
-  --color-primary-soft: #ddb894;
+  --color-primary-pressed: var(--accent-pressed);
+  --color-primary-deep: var(--accent-deep);
+  --color-primary-tint: var(--accent-tint);
+  --color-primary-soft: var(--accent-soft);
+
+  /* useThemeColor() resolves --color-{name}, so these aliases let the JS
+     palette hook use accent-prefixed names that match the CSS variables. */
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-soft: var(--accent-soft);
 
   /* Mastery is the one place colour carries meaning. `new` is deliberately
      grey: an unpractised word should not shout at the reader. */
-  --color-state-new: #6b6a66;
-  --color-state-learning: #a8560f;
-  --color-state-steady: #403f3c;
+  --color-state-new: var(--state-new);
+  --color-state-learning: var(--state-learning);
+  --color-state-steady: var(--state-steady);
 
   /* Square-ish corners: paper, not plastic. */
   --radius-card: 2px;
 }
 
-@layer theme {
-  :root {
-    /* Night values for the tokens that have no HeroUI equivalent to follow. */
-    @variant dark {
-      --color-primary-pressed: #e7ad6a;
-      --color-primary-deep: #f0c48a;
-      --color-primary-tint: #33261a;
-      --color-primary-soft: #5e4429;
-
-      --color-state-new: #9a958c;
-      --color-state-learning: #d99a52;
-      --color-state-steady: #bab5ac;
-    }
-  }
-}
-
+/*
+ * Source Serif 4 is the reading serif — the face the Ochre spot scheme asks
+ * for. Openly licensed (SIL OFL) and drawn by Adobe for long-form reading on
+ * screen, which is what this app is. It replaced Literata, which stood in for
+ * Amazon's proprietary Bookerly while the Kindle themes were the whole design.
+ *
+ * React Native doesn't synthesise weights or slants for custom families: each
+ * face registers under its own family name, so bold text needs
+ * `font-serif-bold` rather than `font-serif font-bold`, and italic needs
+ * `font-italic` rather than the `italic` utility. Only the five faces loaded
+ * in `app/_layout.tsx` exist at runtime — naming a sixth here would silently
+ * render as the system serif.
+ */
 @theme {
-  --font-serif: "Literata_400Regular";
-  --font-serif-medium: "Literata_500Medium";
-  --font-serif-semibold: "Literata_600SemiBold";
-  --font-serif-bold: "Literata_700Bold";
+  --font-serif: "SourceSerif4_400Regular";
+  --font-serif-italic: "SourceSerif4_400Regular_Italic";
+  --font-serif-medium: "SourceSerif4_500Medium";
+  --font-serif-semibold: "SourceSerif4_600SemiBold";
+  --font-serif-bold: "SourceSerif4_700Bold";
+
+  /* The scheme's semantic names for three of the faces above. Aliases rather
+     than a second set of families, so changing the face is one edit. */
+  --font-body: var(--font-serif);
+  --font-heading: var(--font-serif-semibold);
+  --font-italic: var(--font-serif-italic);
 }

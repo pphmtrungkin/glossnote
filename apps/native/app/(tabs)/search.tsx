@@ -1,19 +1,28 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "expo-router";
-import { Card, Chip, Input, Label, Spinner, Surface, TextField, useThemeColor } from "heroui-native";
+import { Input, Spinner, TextField } from "heroui-native";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { MASTERY_CLASS, masteryOf } from "@/lib/mastery";
 import { trpc } from "@/utils/trpc";
+
+/**
+ * The design's `search` screen — one field over every shelf.
+ *
+ * The design splits results into "On your shelves" and "Not saved yet", the
+ * second being terms other readers saved. `word.suggestions` is scoped to one
+ * folder's book, so there is no cross-shelf source for that half; searching
+ * unsaved words belongs to `dictionary.lookup`, which costs a request per
+ * keystroke. Only the reader's own words are listed here.
+ */
 
 export default function SearchScreen() {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
   const trimmedQuery = debouncedQuery.trim();
-  const mutedColor = useThemeColor("muted");
 
   const results = useQuery({
     ...trpc.word.search.queryOptions({ query: trimmedQuery }),
@@ -25,75 +34,79 @@ export default function SearchScreen() {
     <Container className="px-6 pb-8">
       <View className="pt-4">
         <TextField>
-          <Label>Search your words</Label>
           <Input
             value={query}
             onChangeText={setQuery}
-            placeholder="Any word, any folder"
+            placeholder="Any word, any shelf"
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="search"
+            className="font-serif-semibold text-[19px]"
           />
         </TextField>
       </View>
 
-      {trimmedQuery.length === 0 && (
-        <View className="items-center py-12">
-          <Ionicons name="search-outline" size={32} color={mutedColor} />
-          <Text className="text-muted text-sm mt-3">Search across every folder on your shelf.</Text>
-        </View>
-      )}
+      {trimmedQuery.length === 0 ? (
+        <Text className="mt-6 text-[13.5px] leading-[21px] text-muted">
+          Search across every shelf you keep.
+        </Text>
+      ) : null}
 
-      {trimmedQuery.length > 0 && results.isPending && (
+      {trimmedQuery.length > 0 && results.isPending ? (
         <View className="items-center py-10">
           <Spinner />
         </View>
-      )}
+      ) : null}
 
-      {results.error && (
-        <Surface variant="secondary" className="p-4 rounded-lg mt-4">
-          <Text className="text-danger">{results.error.message}</Text>
-        </Surface>
-      )}
+      {results.error ? (
+        <Text className="mt-5 text-[13px] text-danger">{results.error.message}</Text>
+      ) : null}
 
-      {trimmedQuery.length > 0 && results.data?.length === 0 && (
-        <View className="items-center py-12">
-          <Text className="text-muted text-sm">No words match &quot;{trimmedQuery}&quot;.</Text>
-        </View>
-      )}
+      {trimmedQuery.length > 0 && results.data?.length === 0 ? (
+        <Text className="mt-6 text-[13.5px] text-muted">
+          No words match &quot;{trimmedQuery}&quot;.
+        </Text>
+      ) : null}
 
-      <View className="gap-3 pt-4">
-        {results.data?.map((word) => {
-          const definition = word.definitionOverride ?? word.dictionaryEntry?.definition ?? null;
+      {results.data?.length ? (
+        <View className="mt-6">
+          <Text className="mb-2 font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">
+            On your shelves
+          </Text>
 
-          return (
-            <Link
-              key={word.id}
-              href={{ pathname: "/folder/[id]", params: { id: word.folderId } }}
-              asChild
-            >
-              <Pressable>
-                <Card variant="secondary" className="p-4">
-                  <View className="flex-row items-start justify-between gap-3">
-                    <View className="flex-1">
-                      <Card.Title className="font-serif-semibold text-base">{word.term}</Card.Title>
-                      {definition ? (
-                        <Card.Description className="font-serif leading-6">{definition}</Card.Description>
-                      ) : (
-                        <Chip size="sm" variant="soft" color="warning" className="mt-1 self-start">
-                          <Chip.Label>Pending definition</Chip.Label>
-                        </Chip>
-                      )}
-                      <Text className="text-muted text-xs mt-2">{word.folder.title}</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={mutedColor} />
+          {results.data.map((word) => {
+            const definition = word.definitionOverride ?? word.dictionaryEntry?.definition ?? null;
+            const mastery = masteryOf(word);
+
+            return (
+              <Link
+                key={word.id}
+                href={{ pathname: "/word/[id]", params: { id: word.id, folderId: word.folderId } }}
+                asChild
+              >
+                <Pressable className="border-b border-surface-strong py-3.5">
+                  <View className="flex-row items-baseline gap-2.5">
+                    <Text className="font-serif-semibold text-[19px] leading-[22px] text-foreground">
+                      {word.term}
+                    </Text>
+                    <Text
+                      className={`text-[11px] uppercase tracking-[0.6px] ${MASTERY_CLASS[mastery]}`}
+                    >
+                      {mastery}
+                    </Text>
                   </View>
-                </Card>
-              </Pressable>
-            </Link>
-          );
-        })}
-      </View>
+                  <Text className="mt-1 text-[13px] text-muted">{word.folder.title}</Text>
+                  {definition ? (
+                    <Text className="mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
+                      {definition}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              </Link>
+            );
+          })}
+        </View>
+      ) : null}
     </Container>
   );
 }

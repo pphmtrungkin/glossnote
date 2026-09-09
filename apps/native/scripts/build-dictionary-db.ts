@@ -15,7 +15,7 @@
 // creates — the only difference is the `source` value stamped on each row.
 import { normalizeTerm } from "@better-vocab/domain";
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 
 type Entry = { term: string; definition: string; partOfSpeech?: string; exampleSentence?: string; rank?: number };
 
@@ -25,6 +25,11 @@ if ((mode !== "core" && mode !== "extended") || !sourcePath || !outputPath) {
 }
 
 const entries: Entry[] = JSON.parse(readFileSync(sourcePath, "utf-8"));
+
+// A rebuild replaces the asset rather than opening the old one, which would
+// fail on CREATE TABLE and leave a half-built .db behind looking like a bug in
+// the source data.
+rmSync(outputPath, { force: true });
 
 const db = new Database(outputPath, { create: true });
 

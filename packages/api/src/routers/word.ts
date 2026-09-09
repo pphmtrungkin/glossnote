@@ -14,6 +14,9 @@ import { and, desc, eq, ilike, inArray, ne, notInArray, sql } from "drizzle-orm"
 import { z } from "zod";
 
 import { protectedProcedure, router } from "../index";
+
+/** Where a word sits in the reader's rotation — the scheme's three states. */
+type Mastery = "new" | "learning" | "steady";
 import { assertOwned, ownedBy } from "../ownership";
 
 async function assertFolderOwnership(userId: string, folderId: string) {
@@ -322,7 +325,9 @@ export const wordRouter = router({
           folderId: word.folderId,
           term: word.term,
           definitionOverride: word.definitionOverride,
+          lastReviewedAt: word.lastReviewedAt,
           definition: dictionaryEntry.definition,
+          usageNote: dictionaryEntry.usageNote,
           contexts: dictionaryEntry.contexts,
         })
         .from(word)
@@ -368,6 +373,17 @@ export const wordRouter = router({
             // The same rule every other screen displays by: the reader's own
             // wording wins over the shared definition.
             definition: row.definitionOverride ?? row.definition,
+            /**
+             * Enrichment's note on how the word is actually used — the first
+             * reader the AI columns have had. Null when the entry predates
+             * enrichment, or when no key was configured for it.
+             */
+            usageNote: row.usageNote,
+            // Where this word sits in the reader's rotation, for the dot the
+            // colour scheme reserves for exactly this. Mastered words never
+            // reach a card, so `steady` cannot appear here — the union still
+            // names it, because a list of *all* words can show one.
+            state: (row.lastReviewedAt ? "learning" : "new") satisfies Mastery,
           },
         ];
       });

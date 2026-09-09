@@ -17,7 +17,7 @@
     "@better-vocab/api": "workspace:*",
     "@better-vocab/domain": "workspace:*",
     "@better-vocab/env": "workspace:*",
-    "@expo-google-fonts/literata": "^0.4.3",
+    "@expo-google-fonts/source-serif-4": "^0.4.1",
     "@expo/metro-runtime": "~57.0.15",
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.14",
@@ -28,13 +28,15 @@
     "@trpc/tanstack-react-query": "^11.18.0",
     "better-auth": "catalog:",
     "dotenv": "catalog:",
-    "expo": "~57.0.19",
+    "expo": "~57.0.20",
+    "expo-asset": "~57.0.16",
     "expo-constants": "~57.0.17",
+    "expo-file-system": "~57.0.6",
     "expo-font": "~57.0.3",
     "expo-haptics": "~57.0.1",
     "expo-linking": "~57.0.9",
     "expo-network": "~57.0.1",
-    "expo-router": "~57.0.18",
+    "expo-router": "~57.0.19",
     "expo-secure-store": "~57.0.3",
     "expo-splash-screen": "~57.0.7",
     "expo-sqlite": "~57.0.2",
@@ -64,7 +66,6 @@
     "@types/bun": "catalog:",
     "@types/node": "^26.2.0",
     "@types/react": "~19.2.18",
-    "typescript": "~6.0.3",
-    "yaml": "^2.8.1"
+    "typescript": "~6.0.3"
   }
 }

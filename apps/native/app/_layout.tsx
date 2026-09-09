@@ -1,15 +1,16 @@
 import "@/global.css";
 import {
-  Literata_400Regular,
-  Literata_500Medium,
-  Literata_600SemiBold,
-  Literata_700Bold,
-} from "@expo-google-fonts/literata";
+  SourceSerif4_400Regular,
+  SourceSerif4_400Regular_Italic,
+  SourceSerif4_500Medium,
+  SourceSerif4_600SemiBold,
+  SourceSerif4_700Bold,
+} from "@expo-google-fonts/source-serif-4";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { SQLiteProvider } from "expo-sqlite";
+import { SQLiteProvider, type SQLiteDatabase } from "expo-sqlite";
 import { HeroUINativeProvider, Spinner, useThemeColor } from "heroui-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
@@ -18,6 +19,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { AppThemeProvider, useAppTheme } from "@/contexts/app-theme-context";
 import { authClient } from "@/lib/auth-client";
+import { installBundledCore } from "@/lib/dictionary-pack";
 import { LOCAL_DB_NAME, migrateLocalDb } from "@/lib/local-db";
 import { queryClient } from "@/utils/trpc";
 
@@ -48,7 +50,7 @@ function StackLayout() {
       screenOptions={{
         headerTintColor: themeColorForeground,
         headerStyle: { backgroundColor: themeColorBackground },
-        headerTitleStyle: { fontFamily: "Literata_600SemiBold", color: themeColorForeground },
+        headerTitleStyle: { fontFamily: "SourceSerif4_600SemiBold", color: themeColorForeground },
         contentStyle: { backgroundColor: themeColorBackground },
       }}
     >
@@ -58,11 +60,29 @@ function StackLayout() {
 
       <Stack.Protected guard={isSignedIn}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="folder/[id]" options={{ title: "Folder" }} />
+        <Stack.Screen name="folder/[id]" options={{ title: "Shelf" }} />
+        <Stack.Screen name="word/[id]" options={{ title: "Word" }} />
         <Stack.Screen name="add-word" options={{ title: "Add word", presentation: "modal" }} />
+        {/* The review run owns the whole screen — its own close button and
+            progress rail are the chrome, so the stack header would duplicate
+            them. */}
+        <Stack.Screen name="review" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ title: "Settings" }} />
       </Stack.Protected>
     </Stack>
   );
+}
+
+/**
+ * Brings the on-device database up: schema first, then the bundled dictionary.
+ *
+ * The order is load-bearing — `installBundledCore` merges into the `dictionary`
+ * table `migrateLocalDb` creates. Both are no-ops after the first launch, and
+ * the core merge swallows its own failures, so this never blocks startup.
+ */
+async function initLocalDb(db: SQLiteDatabase) {
+  await migrateLocalDb(db);
+  await installBundledCore(db);
 }
 
 /** How long to wait on the reading font before rendering anyway. */
@@ -98,11 +118,15 @@ function SplashGate({ areFontsLoaded }: { areFontsLoaded: boolean }) {
 }
 
 export default function Layout() {
+  // Five faces, not the family's full twelve: each one is a TTF that ships in
+  // the binary, and the app renders exactly these. Italic is body weight only
+  // — nothing sets italic headings.
   const [areFontsLoaded, fontError] = useFonts({
-    Literata_400Regular,
-    Literata_500Medium,
-    Literata_600SemiBold,
-    Literata_700Bold,
+    SourceSerif4_400Regular,
+    SourceSerif4_400Regular_Italic,
+    SourceSerif4_500Medium,
+    SourceSerif4_600SemiBold,
+    SourceSerif4_700Bold,
   });
 
   // A font that fails to load shouldn't wedge the app on the splash screen —
@@ -110,7 +134,7 @@ export default function Layout() {
   const isFontStepDone = areFontsLoaded || !!fontError;
 
   return (
-    <SQLiteProvider databaseName={LOCAL_DB_NAME} onInit={migrateLocalDb}>
+    <SQLiteProvider databaseName={LOCAL_DB_NAME} onInit={initLocalDb}>
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
           <KeyboardProvider>

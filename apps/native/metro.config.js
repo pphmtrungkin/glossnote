@@ -5,6 +5,10 @@ const { wrapWithReanimatedMetroConfig } = require("react-native-reanimated/metro
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
+// The bundled core dictionary is a .db file, which Metro treats as source
+// unless it is declared an asset.
+config.resolver.assetExts.push("db");
+
 const uniwindConfig = withUniwindConfig(wrapWithReanimatedMetroConfig(config), {
   cssEntryFile: "./global.css",
   dtsFile: "./uniwind-types.d.ts",

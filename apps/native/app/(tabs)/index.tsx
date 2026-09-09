@@ -1,332 +1,187 @@
-import type { AppRouter } from "@better-vocab/api/routers/index";
 import { Ionicons } from "@expo/vector-icons";
-import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { inferRouterOutputs } from "@trpc/server";
-import { Link } from "expo-router";
-import {
-  Button,
-  Card,
-  Chip,
-  FieldError,
-  Input,
-  Label,
-  Spinner,
-  Surface,
-  TextField,
-  useThemeColor,
-  useToast,
-} from "heroui-native";
-import { useState } from "react";
-import { Alert, Image, Pressable, Text, View } from "react-native";
-import z from "zod";
+import { useQuery } from "@tanstack/react-query";
+import { Link, router } from "expo-router";
+import { Image, Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import {
-  FOLDER_STATUSES,
-  FOLDER_STATUS_COLORS,
-  FOLDER_STATUS_LABELS,
-  type FolderStatus,
-} from "@/lib/folder-status";
+import { useFolders } from "@/hooks/use-folders";
 import { trpc } from "@/utils/trpc";
 
-// One result from Hardcover, shaped by book.search. `folder.create` takes this
-// object straight back and upserts it — the client never handles a book id.
-type BookHit = inferRouterOutputs<AppRouter>["book"]["search"][number];
+/** How many due words the home page lists before deferring to the review run. */
+const DUE_PREVIEW = 3;
 
-const folderSchema = z.object({
-  title: z.string().trim().min(1, "Give the folder a title"),
-  status: z.enum(FOLDER_STATUSES),
-});
+/** Enough of the queue to count "waiting to be practised" honestly. */
+const DUE_COUNT_LIMIT = 50;
 
-export default function ShelfScreen() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const mutedColor = useThemeColor("muted");
-  const [isFormOpen, setIsFormOpen] = useState(false);
+function greeting(hour: number) {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
-  // The Hardcover hit the user picked, held until submit. Null means a
-  // freeform folder — either they skipped search, or they're offline and typed
-  // a title by hand, which UserFlow §2 requires to keep working.
-  const [pickedBook, setPickedBook] = useState<BookHit | null>(null);
-  const [bookQuery, setBookQuery] = useState("");
-  const debouncedBookQuery = useDebouncedValue(bookQuery);
+/** "Tues 28 Aug" — the design's own abbreviation, not the locale's. */
+function shortDate(date: Date) {
+  const day = ["Sun", "Mon", "Tues", "Wed", "Thur", "Fri", "Sat"][date.getDay()];
+  const month = date.toLocaleDateString("en", { month: "short" });
+  return `${day} ${date.getDate()} ${month}`;
+}
 
-  const folders = useQuery(trpc.folder.list.queryOptions());
-
-  // Debounced and gated on a picked book: Hardcover's free tier allows 60
-  // requests a minute with a burst of 10, so a request per keystroke would
-  // burn the budget on one search.
-  const bookResults = useQuery({
-    ...trpc.book.search.queryOptions({ query: debouncedBookQuery.trim() }),
-    enabled: !pickedBook && debouncedBookQuery.trim().length >= 2,
-    retry: false,
-  });
-
-  function invalidateFolders() {
-    return queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() });
-  }
-
-  function showError(error: { message: string }) {
-    toast.show({ variant: "danger", label: error.message });
-  }
-
-  const createFolder = useMutation(
-    trpc.folder.create.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
+/** Section label — small, tracked, quiet. Used three times on this page. */
+function Kicker({ children }: { children: string }) {
+  return (
+    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.6px] text-muted">
+      {children}
+    </Text>
   );
-  const updateStatus = useMutation(
-    trpc.folder.update.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
-  );
-  const deleteFolder = useMutation(
-    trpc.folder.delete.mutationOptions({ onSuccess: invalidateFolders, onError: showError }),
-  );
+}
 
-  const form = useForm({
-    defaultValues: { title: "", status: "reading" as FolderStatus },
-    validators: { onSubmit: folderSchema },
-    onSubmit: async ({ value, formApi }) => {
-      await createFolder.mutateAsync({
-        title: value.title.trim(),
-        status: value.status,
-        book: pickedBook ?? undefined,
-      });
-      formApi.reset();
-      closeForm();
-    },
-  });
+export default function HomeScreen() {
+  const folders = useFolders().data;
+  const due = useQuery(trpc.word.quiz.queryOptions({ limit: DUE_COUNT_LIMIT }));
 
-  function closeForm() {
-    setIsFormOpen(false);
-    setPickedBook(null);
-    setBookQuery("");
-  }
+  // "Currently reading" is the most recent folder still marked `reading` —
+  // folder.list already orders by newest first, so this is the top of that
+  // filter rather than a second query.
+  const current = folders?.find((folder) => folder.status === "reading");
 
-  function pickBook(hit: BookHit) {
-    setPickedBook(hit);
-    form.setFieldValue("title", hit.title);
-    setBookQuery("");
-  }
-
-  function confirmDelete(id: string, title: string) {
-    Alert.alert("Delete folder?", `"${title}" and every word in it will be removed.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => deleteFolder.mutate({ id }) },
-    ]);
-  }
+  const dueWords = due.data ?? [];
+  const folderTitle = (folderId: string) =>
+    folders?.find((folder) => folder.id === folderId)?.title ?? "";
 
   return (
     <Container className="px-6 pb-8">
-      <View className="flex-row items-center justify-between py-4">
-        <Text className="text-2xl font-serif-bold text-foreground">Your shelf</Text>
-        <Button
-          size="sm"
-          variant={isFormOpen ? "tertiary" : "primary"}
-          onPress={() => (isFormOpen ? closeForm() : setIsFormOpen(true))}
-        >
-          <Button.Label>{isFormOpen ? "Cancel" : "New folder"}</Button.Label>
-        </Button>
-      </View>
+      <Text className="mt-2 text-[11px] tracking-[0.6px] text-muted">{shortDate(new Date())}</Text>
 
-      {isFormOpen && (
-        <Surface variant="secondary" className="p-4 rounded-lg mb-4">
-          <Text className="text-foreground font-medium mb-4">New folder</Text>
+      <Text className="mt-3 font-serif-semibold text-[29px] leading-[33px] tracking-[-0.6px] text-foreground">
+        {greeting(new Date().getHours())}.
+      </Text>
+      <Text className="mt-1 text-[14px] text-muted">
+        {dueWords.length === 0
+          ? "Nothing waiting to be practised."
+          : `${dueWords.length} ${dueWords.length === 1 ? "word is" : "words are"} waiting to be practised.`}
+      </Text>
 
-          {pickedBook ? (
-            <Surface variant="secondary" className="flex-row items-center gap-3 mb-3 p-2 rounded-md">
-              {pickedBook.coverImageUrl ? (
-                <Image source={{ uri: pickedBook.coverImageUrl }} className="w-10 h-14 rounded" resizeMode="cover" />
-              ) : (
-                <View className="w-10 h-14 rounded items-center justify-center bg-surface-2">
-                  <Ionicons name="book-outline" size={18} color={mutedColor} />
-                </View>
-              )}
+      {/* ---- Currently reading ------------------------------------------- */}
+      {current ? (
+        <View className="mt-8">
+          <Kicker>Currently reading</Kicker>
+          <Link href={{ pathname: "/folder/[id]", params: { id: current.id } }} asChild>
+            <Pressable className="mt-3 flex-row items-start gap-4">
+              {/* A cover with the accent as its top edge — the design's one
+                  spot of colour in this block. */}
+              <View className="h-[92px] w-[62px] justify-end border-t-[3px] border-primary bg-surface-secondary p-1.5">
+                {current.book?.coverImageUrl ? (
+                  <Image
+                    source={{ uri: current.book.coverImageUrl }}
+                    className="absolute inset-0 h-full w-full"
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <Text className="font-serif-semibold text-[9px] leading-[11px] text-foreground">
+                    {current.title}
+                  </Text>
+                )}
+              </View>
+
               <View className="flex-1">
-                <Text className="text-foreground text-sm font-medium" numberOfLines={1}>
-                  {pickedBook.title}
+                <Text
+                  className="font-serif-semibold text-[19px] leading-[22px] tracking-[-0.3px] text-foreground"
+                  numberOfLines={2}
+                >
+                  {current.title}
                 </Text>
-                <Text className="text-muted text-xs" numberOfLines={1}>
-                  {pickedBook.authors.join(", ") || "Unknown author"}
+                {current.book?.authors?.length ? (
+                  <Text className="mt-0.5 text-[13px] text-muted">
+                    {current.book.authors.join(", ")}
+                  </Text>
+                ) : null}
+                <Text className="mt-3 text-[11.5px] text-muted">
+                  {current.wordCount === 1 ? "1 word saved" : `${current.wordCount} words saved`}
                 </Text>
               </View>
-              <Button size="sm" variant="tertiary" onPress={() => setPickedBook(null)}>
-                <Button.Label>Change</Button.Label>
-              </Button>
-            </Surface>
-          ) : (
-            <View className="mb-3">
-              <TextField>
-                <Label>Find the book</Label>
-                <Input
-                  value={bookQuery}
-                  onChangeText={setBookQuery}
-                  placeholder="Search Hardcover, or skip for a freeform folder"
-                  autoCorrect={false}
-                  returnKeyType="search"
-                />
-              </TextField>
-
-              {bookResults.isFetching && (
-                <View className="py-3 items-center">
-                  <Spinner size="sm" />
-                </View>
-              )}
-
-              {/* Search needs connectivity; typing a title below always works,
-                  which is the offline fallback UserFlow §2 asks for. */}
-              {bookResults.error && (
-                <Text className="text-muted text-xs mt-2">
-                  {bookResults.error.message} You can still type a title below.
-                </Text>
-              )}
-
-              {bookResults.data?.map((hit) => (
-                <Pressable key={hit.externalId} onPress={() => pickBook(hit)} className="flex-row items-center gap-3 py-2">
-                  {hit.coverImageUrl ? (
-                    <Image source={{ uri: hit.coverImageUrl }} className="w-8 h-12 rounded" resizeMode="cover" />
-                  ) : (
-                    <View className="w-8 h-12 rounded items-center justify-center bg-surface-2">
-                      <Ionicons name="book-outline" size={14} color={mutedColor} />
-                    </View>
-                  )}
-                  <View className="flex-1">
-                    <Text className="text-foreground text-sm" numberOfLines={1}>
-                      {hit.title}
-                    </Text>
-                    <Text className="text-muted text-xs" numberOfLines={1}>
-                      {[hit.authors.join(", "), hit.releaseYear].filter(Boolean).join(" · ")}
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
-
-              {bookResults.data?.length === 0 && (
-                <Text className="text-muted text-xs mt-2">No matches. Type a title below instead.</Text>
-              )}
-            </View>
-          )}
-
-          <form.Subscribe selector={(state) => state.isSubmitting}>
-            {(isSubmitting) => (
-              <View className="gap-3">
-                <form.Field name="title">
-                  {(field) => (
-                    <TextField>
-                      <Label>Title</Label>
-                      <Input
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChangeText={field.handleChange}
-                        placeholder="Pride and Prejudice"
-                        autoFocus
-                        returnKeyType="done"
-                        onSubmitEditing={form.handleSubmit}
-                      />
-                      <FieldError isInvalid={!field.state.meta.isValid}>
-                        {field.state.meta.errors[0]?.message}
-                      </FieldError>
-                    </TextField>
-                  )}
-                </form.Field>
-
-                <form.Field name="status">
-                  {(field) => (
-                    <View>
-                      <Label>Status</Label>
-                      <View className="flex-row gap-2 mt-2">
-                        {FOLDER_STATUSES.map((status) => (
-                          <Chip
-                            key={status}
-                            size="sm"
-                            color={FOLDER_STATUS_COLORS[status]}
-                            variant={field.state.value === status ? "primary" : "secondary"}
-                            onPress={() => field.handleChange(status)}
-                          >
-                            <Chip.Label>{FOLDER_STATUS_LABELS[status]}</Chip.Label>
-                          </Chip>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                </form.Field>
-
-                <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-                  {isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label>Create folder</Button.Label>}
-                </Button>
-              </View>
-            )}
-          </form.Subscribe>
-        </Surface>
-      )}
-
-      {folders.isPending && (
-        <View className="items-center py-10">
-          <Spinner />
-        </View>
-      )}
-
-      {folders.error && (
-        <Surface variant="secondary" className="p-4 rounded-lg">
-          <Text className="text-danger mb-3">{folders.error.message}</Text>
-          <Button size="sm" variant="tertiary" onPress={() => folders.refetch()}>
-            <Button.Label>Try again</Button.Label>
-          </Button>
-        </Surface>
-      )}
-
-      {folders.data?.length === 0 && !isFormOpen && (
-        <Surface variant="secondary" className="p-6 rounded-lg items-center">
-          <Ionicons name="library-outline" size={32} color={mutedColor} />
-          <Text className="text-foreground font-medium mt-3 mb-1">Your shelf is empty</Text>
-          <Text className="text-muted text-sm text-center mb-4">
-            Create a folder for what you&apos;re reading, then log the words you look up.
-          </Text>
-          <Button size="sm" onPress={() => setIsFormOpen(true)}>
-            <Button.Label>Create your first folder</Button.Label>
-          </Button>
-        </Surface>
-      )}
-
-      <View className="gap-3">
-        {folders.data?.map((folder) => (
-          <Link key={folder.id} href={{ pathname: "/folder/[id]", params: { id: folder.id } }} asChild>
-            <Pressable onLongPress={() => confirmDelete(folder.id, folder.title)}>
-              <Card variant="secondary" className="p-4">
-                <View className="flex-row items-start justify-between gap-3">
-                  <View className="flex-1">
-                    <Card.Title className="font-serif-medium text-base">{folder.title}</Card.Title>
-                    {/* No author line yet: folders are title-only until a book
-                        search populates `folder.bookId`. */}
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={mutedColor} />
-                </View>
-
-                <View className="flex-row gap-2 mt-3">
-                  {FOLDER_STATUSES.map((status) => {
-                    const isActive = folder.status === status;
-                    return (
-                      <Chip
-                        key={status}
-                        size="sm"
-                        color={FOLDER_STATUS_COLORS[status]}
-                        variant={isActive ? "primary" : "secondary"}
-                        onPress={() => {
-                          if (!isActive) updateStatus.mutate({ id: folder.id, status });
-                        }}
-                      >
-                        <Chip.Label>{FOLDER_STATUS_LABELS[status]}</Chip.Label>
-                      </Chip>
-                    );
-                  })}
-                </View>
-              </Card>
             </Pressable>
           </Link>
-        ))}
+        </View>
+      ) : null}
+
+      {/* ---- Capture ------------------------------------------------------ */}
+      <View className="mt-7 flex-row gap-2">
+        <Pressable
+          disabled
+          className="min-h-[76px] flex-1 items-center justify-center gap-2 rounded-card border border-surface-strong opacity-40"
+        >
+          <Ionicons name="camera-outline" size={22} color="#6b6a66" />
+          <Text className="font-serif-semibold text-[12px] text-muted">Scan page</Text>
+        </Pressable>
+
+        <Pressable
+          disabled
+          className="min-h-[76px] flex-1 items-center justify-center gap-2 rounded-card border border-surface-strong opacity-40"
+        >
+          <Ionicons name="mic-outline" size={22} color="#6b6a66" />
+          <Text className="font-serif-semibold text-[12px] text-muted">Say it</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() =>
+            router.push(
+              current ? { pathname: "/add-word", params: { folderId: current.id } } : "/shelf",
+            )
+          }
+          className="min-h-[76px] flex-1 items-center justify-center gap-2 rounded-card bg-primary"
+        >
+          <Ionicons name="create-outline" size={22} color="#ffffff" />
+          <Text className="font-serif-semibold text-[12px] text-primary-content">Type it</Text>
+        </Pressable>
       </View>
 
-      {!!folders.data?.length && (
-        <Text className="text-muted text-xs text-center mt-4">Long-press a folder to delete it.</Text>
+      {/* ---- Due today ---------------------------------------------------- */}
+      {/* The design pairs this heading with a "Start review" button. It only
+          renders when there is something to practise — the run screen would
+          otherwise open straight onto its own empty state. Tapping a word opens
+          its folder instead of jumping into the middle of a run. */}
+      <View className="mt-8 flex-row items-baseline justify-between">
+        <Kicker>Due today</Kicker>
+        {dueWords.length > 0 ? (
+          <Pressable onPress={() => router.push("/review")} className="-m-1.5 p-1.5">
+            <Text className="font-serif-semibold text-[12px] text-primary">Start review</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {dueWords.length === 0 ? (
+        <Text className="mt-3 text-[13px] text-muted">
+          {folders?.length
+            ? "Every word you've saved is either mastered or still waiting on a definition."
+            : "Add a book to your shelf and the words you look up will land here."}
+        </Text>
+      ) : (
+        dueWords.slice(0, DUE_PREVIEW).map((card) => (
+          <Link
+            key={card.wordId}
+            href={{ pathname: "/folder/[id]", params: { id: card.folderId } }}
+            asChild
+          >
+            <Pressable className="flex-row items-baseline gap-3 border-b border-surface-strong py-3.5">
+              {/* Grey until a word has been practised at least once: an
+                  unpractised word shouldn't shout. */}
+              <View
+                className={`h-[7px] w-[7px] rounded-full ${
+                  card.state === "learning" ? "bg-state-learning" : "bg-state-new"
+                }`}
+              />
+              <View className="flex-1">
+                <Text className="font-serif-semibold text-[17px] leading-[20px] text-foreground">
+                  {card.term}
+                </Text>
+                <Text className="mt-0.5 text-[12px] text-muted">{folderTitle(card.folderId)}</Text>
+              </View>
+              <Text className="text-[11px] uppercase tracking-[0.6px] text-muted">
+                {card.state}
+              </Text>
+            </Pressable>
+          </Link>
+        ))
       )}
     </Container>
   );

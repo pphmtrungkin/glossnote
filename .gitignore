@@ -56,3 +56,10 @@ coverage
 .cache
 tmp
 temp
+
+# Built dictionary artifacts. `assets/dictionary/core.db` is committed on
+# purpose — it ships in the binary; the extended pack (25 MB) is hosted, and
+# the intermediate JSON is a build step, so neither belongs in git.
+dictionary-core.json
+dictionary-extended.json
+dictionary-extended.db
