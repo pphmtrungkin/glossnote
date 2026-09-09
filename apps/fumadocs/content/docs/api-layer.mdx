@@ -75,7 +75,7 @@ See [AI enrichment](/docs/ai-enrichment) for the cost model, the claim, the spoi
 
 | Procedure | What it does |
 | --- | --- |
-| `list` | All folders belonging to the caller, each with its linked `book` row attached (`with: { book: true }`) |
+| `list` | All folders belonging to the caller, each with its linked `book` row attached (`with: { book: true }`) and a `wordCount` |
 | `create` | Insert a folder — optionally upserting a picked Hardcover book and linking it; `status` defaults to `"reading"` |
 | `update` | Rename the folder, move it between `reading` / `finished` / `misc`, or both |
 | `delete` | Remove a folder |
@@ -97,6 +97,8 @@ This used to be six hand-written copies of that predicate in three different sha
 </Callout>
 
 `create` is the one procedure doing more than an insert. It takes the *picked search result* rather than a `bookId` — a client-supplied foreign key is unvalidated input — upserts the `book` row on `(provider, external_id)`, then inserts the folder pointing at it. It also translates the partial unique index on `(user_id, book_id)` into a readable `CONFLICT` instead of letting a raw Postgres `23505` reach the client. Both are covered in [Book search](/docs/book-search).
+
+`wordCount` is one grouped `count()` over `word`, run alongside the folder query and joined in memory — not a subquery per row. Both the library screen and the home page show it, and a folder with no words simply doesn't appear in the group-by, which is what the `?? 0` covers.
 
 ## The `preference` router
 
@@ -195,6 +197,10 @@ Ordering is least-recently-reviewed first, with never-reviewed ahead of those, s
 <Callout type="info">
 The sort ends on `word.id`, which looks like decoration and isn't. Words written in one statement — an offline flush, or the seed — share `createdAt` to the microsecond, and without a total order Postgres may return them in a different order between calls. A quiz that reshuffles itself on every open reads as a bug in the session rather than a missing sort key. `db:smoke` caught exactly that on its second run.
 </Callout>
+
+Each card also carries a `state` — `new` until the word has been reviewed once, `learning` after — which is what the colour scheme's mastery dot reads. (`steady` is in the union but can't appear here: it means mastered, and mastered words don't get cards.) The home page uses it for the dot beside each due word ([Implementation status](/docs/implementation-status)).
+
+A card carries `usageNote` as well, from the same shared row — the reveal shows the definition and then how the word is actually used. That, with the word screen, is the first reader the AI columns have had.
 
 The answer travels with the card. This is self-study over the reader's own vocabulary, not an exam — withholding it would buy nothing and cost a round trip on every reveal, on a screen that should keep working in a tunnel.
 

@@ -94,6 +94,26 @@ StatusBar, `react-native-svg` fills, chart libraries and `Animated` take colour 
 
 Its `usePalette()` reads the **app's** theme context rather than React Native's `useColorScheme()`, which the scheme's own file reaches for. The distinction matters here: this app's theme is a choice the reader makes and we persist in SQLite across five themes, not a mirror of the OS setting. Keying off the OS would hand a reader on the Sepia page the light palette while the rest of the app rendered sepia, and would ignore their choice entirely on a phone whose system theme disagrees.
 
+## The reading face
+
+Source Serif 4 (SIL OFL, drawn by Adobe for long-form reading on screen) is the scheme's face, loaded in `app/_layout.tsx`. Five faces ship: regular, its italic, medium, semibold, bold.
+
+React Native doesn't synthesise weights or slants for a custom family — **each face registers under its own family name**. So bold text is `font-serif-bold`, not `font-serif font-bold`, and italic is `font-italic`, not the `italic` utility. Naming a face that isn't loaded renders as the system serif with no error, which is why the loaded set and the `@theme` block are kept to the same five.
+
+The scheme's semantic names are aliases onto those faces, the same trick the colours use:
+
+```css
+--font-body: var(--font-serif);
+--font-heading: var(--font-serif-semibold);
+--font-italic: var(--font-serif-italic);
+```
+
+So `font-heading` and `font-serif-semibold` are the same face under two names, and changing the reading face is one edit rather than five.
+
+<Callout type="info">
+Literata used to fill this slot — it stood in for Amazon's proprietary Bookerly while the Kindle page themes were the whole design. It came out with the scheme swap rather than being left installed unused.
+</Callout>
+
 ## Verifying a theme change
 
 Typechecking is not enough: `tsc` reads the generated theme union, and the colours themselves only exist after Uniwind compiles the CSS. Bundle the app and look at what came out:

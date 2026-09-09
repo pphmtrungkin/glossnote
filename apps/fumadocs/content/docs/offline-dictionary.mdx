@@ -13,6 +13,8 @@ That's `expo-sqlite` — a real SQLite database bundled with (or downloaded by) 
 
 Defined in `apps/native/lib/local-db.ts`, created via a migration that runs through `SQLiteProvider`'s `onInit` callback (wired up in `apps/native/app/_layout.tsx`) every time the app starts. The current schema version is `user_version` 3.
 
+`onInit` runs two steps in a load-bearing order: `migrateLocalDb` creates the schema, then `installBundledCore` merges the bundled dictionary into the `dictionary` table it just created. Both are no-ops after the first launch.
+
 | Table | Purpose |
 | --- | --- |
 | `dictionary` | Every definition available on-device, in all three tiers — distinguished by a `source` column |
@@ -75,32 +77,79 @@ Within `extended`, only the top-ranked sense (`rank` 0, the most frequent) is su
 
 ## Where the bundled data comes from
 
-The reference dictionary is built from [Open English WordNet](https://github.com/globalwordnet/english-wordnet) (CC-BY 4.0), a free lexical database with roughly 136,000 lemmas. That's too large to ship wholesale as a "small" first-launch download, and WordNet's own data doesn't carry a "how common is this word in everyday English" signal — so the app draws a line using data WordNet *does* provide: sense frequency ranking.
+The reference dictionary is built from [Open English WordNet](https://github.com/globalwordnet/english-wordnet) (CC-BY 4.0), a free lexical database of roughly 127,000 lemmas across 107,500 synsets. That's too large to ship wholesale as a "small" first-launch download, and WordNet's own data doesn't carry a "how common is this word in everyday English" signal — so the app draws a line using data WordNet *does* provide: sense frequency ranking.
 
-**`core`** = single-word lemmas only, keeping just the #1 (most frequent) sense of each. Small enough to bundle directly in the app binary — available instantly, even before the app has ever touched the network.
+**`core`** = single-word lemmas only, keeping just the #1 (most frequent) sense of each. **74,441 terms, 9.2 MB** — small enough to bundle directly in the app binary, available instantly before the app has ever touched the network.
 
-**`extended`** = everything else: every lemma including multi-word phrases, every sense, ranked. Downloaded separately, only if a user opts into the larger pack from Settings.
+**`extended`** = everything: every lemma including multi-word phrases, every sense, ranked. **127,311 terms across 185,129 senses, 25 MB** — downloaded separately, only if a reader opts into the larger pack from Settings.
 
 ### The build-time pipeline
 
 Two scripts, run on a developer's machine (or CI), not on-device:
 
-1. **`apps/native/scripts/wordnet-to-dictionary.ts`** downloads WordNet's raw source data directly from GitHub — around 45 "synset" YAML files (each holding definitions and example sentences for a category like `noun.person` or `verb.motion`) plus `sense-orders.csv`, which lists, for every word, its senses ranked by frequency. The script cross-references the two — for each word, walk its ranked list of senses, and pull each one's definition out of the matching YAML file — and writes two plain JSON files: `dictionary-core.json` and `dictionary-extended.json`.
+1. **`apps/native/scripts/wordnet-to-dictionary.ts`** downloads the **JSON export attached to a tagged OEWN release** (`bun run scripts/wordnet-to-dictionary.ts <out-dir> [edition]`, default `2025`) — one 9.5 MB zip, about two seconds end to end. Inside are two file groups it cross-references: ~45 "synset" files (definitions and example sentences for a category like `noun.person` or `verb.motion`) and 27 `entries-*.json` files, the lemma index, which lists every word's senses in WordNet's own frequency order. It writes two plain JSON files: `dictionary-core.json` and `dictionary-extended.json`.
+
+   <Callout type="warn">
+   Three traps, all of which this script hit for real before it produced a usable dictionary.
+
+   **`src/sense-orders.csv` is not the lemma index.** It looks like one — `lemma,pos,synset-ids` — but it holds ~1,300 rows of manual sense-order *corrections*. Building from it yields **963 words** instead of 75,000, and nothing errors. `entries-*.json` is the vocabulary.
+
+   **Sense rank must count across a lemma's whole entry, not per part of speech.** The device index is unique on `(term, source, rank)`, so restarting at 0 for a word's verb senses collides with its noun senses and `INSERT OR IGNORE` drops them *silently*.
+
+   **A WordNet example is not always a string.** Attributed quotations are `{ source, text }` objects — 589 of them in the core set — which reach the SQLite driver as unbindable values.
+   </Callout>
+
+   The source is a *pinned edition* rather than `main` deliberately: reading the repo's working branch means 72 requests and a moving target. `main` had already drifted past the 2025 release when this was built — 107,528 synsets against the release's 107,519 — which is enough for two builds of "the dictionary" to be quietly different artifacts. JSON exports start at the 2025 edition; older tags ship only XML and RDF, and the script says so rather than 404-ing obscurely.
 2. **`apps/native/scripts/build-dictionary-db.ts`** is intentionally *not* WordNet-specific — it just takes one of those JSON files plus a `core`/`extended` mode flag and produces a real SQLite `.db` file using Bun's built-in `bun:sqlite` (no extra dependency needed). Since both tiers now write the same `dictionary` table, the mode flag only decides the `source` value stamped on each row and whether `rank` is honoured or pinned to 0.
 
-   The script also sets `PRAGMA user_version = 3` on the file it writes. That matters: a shipped asset opens with the current version already stamped, so `migrateLocalDb` returns early and never touches the pre-populated rows. Keep the two numbers in sync — a build script left behind a schema bump would have its data migrated out from under it.
+   It rebuilds over its output rather than opening it: `CREATE TABLE` on an existing file fails, and a half-built `.db` left behind reads as a bug in the source data.
 
    An FTS5 index used to be built alongside the `core` table, intended for "did you mean…" suggestions on a voice mishear. Nothing ever queried it, so it was dropped — it doubled the asset size for a feature that doesn't exist. Add it back with the suggestion UI that needs it.
 
-The resulting `dictionary-core.db` gets wired into `SQLiteProvider`'s `assetSource` prop, which tells Expo to copy that pre-built file onto the device the very first time the app launches — the "small core set, available offline from the first launch" requirement, satisfied by shipping a finished database rather than trying to build one at runtime. `dictionary-extended.db` would be hosted separately and downloaded on demand.
+## Getting the two tiers onto a device
+
+Both tiers arrive as a pre-built SQLite file, and both land the same way — `apps/native/lib/dictionary-pack.ts` is the one module that does it.
+
+### The merge
+
+SQLite copies the rows itself. No JS loop:
+
+```sql
+ATTACH DATABASE ? AS pack;
+INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sentence, source, rank)
+  SELECT term, definition, part_of_speech, example_sentence, ?, rank FROM pack.dictionary;
+DETACH DATABASE pack;
+```
+
+`ATTACH` runs outside a transaction — SQLite refuses it inside one — while the `INSERT` is a single statement, so its implicit transaction covers every row: the merge lands whole or not at all. `INSERT OR IGNORE` against `dictionary_term_source_rank_uidx` is what makes a re-run idempotent rather than a duplicate-key failure. The tier is a bound parameter written *here* rather than read out of the file, so a pack built with the wrong mode can't file itself under another tier. Measured on the real files: **74,441 core rows in 86 ms, 184,356 extended rows in 272 ms.**
+
+<Callout type="info">
+A column list, not `SELECT *`. A future column added to the local table would otherwise shift the pack's values silently into the wrong ones.
+</Callout>
+
+### `core` — bundled, merged on first launch
+
+`assets/dictionary/core.db` ships inside the binary (`db` is registered in `metro.config.js`'s `assetExts`, or Metro treats it as source). `installBundledCore` merges it from `SQLiteProvider`'s `onInit`, after the schema migration and guarded by an `app_setting` flag so a 75k-row copy doesn't run on every launch. Failures are swallowed — an app that can't open its own asset should still start, and the online tier still resolves.
 
 <Callout type="warn">
-This pipeline exists as working code, but hasn't been run for real yet — no `.db` files exist in the repo, and `assetSource` isn't wired up in `_layout.tsx` until one does. See [Implementation status](/docs/implementation-status).
+It is deliberately **not** handed to `SQLiteProvider` as `assetSource`, which was the original plan and is a trap. The asset carries only the `dictionary` table, but the build script stamps `PRAGMA user_version = 3` on it — so `migrateLocalDb` returns early and never creates `pending_sync` or `app_setting`. A device that opened the asset directly would throw on the first theme save. Merging costs one copy of the rows and keeps `local-db.ts` the only owner of the schema; it also works on upgrade, where `assetSource` does nothing because the database already exists.
 </Callout>
+
+### `extended` — downloaded, then permanent
+
+The download needs a connection. Nothing after it does.
+
+`EXPO_PUBLIC_DICTIONARY_PACK_URL` points at the pack as a **plain static file** — a GitHub release asset, R2, any static host. Deliberately not served by `apps/server`: tRPC is the wrong transport for a 25 MB binary, and a static host keeps the download working when the API is down. It's optional, and Settings says the pack is unavailable rather than offering a dead button when it's unset.
+
+`installPack` fetches it with `expo-file-system`'s `File.createDownloadTask` (progress, pause and resume come with the task), merges it, and deletes the downloaded file in a `finally` — the merged rows are the artifact, the file was a courier. `removePack` gives the space back with `DELETE FROM dictionary WHERE source = 'extended'`, which is the whole reason the three tier tables were collapsed into one.
+
+The install's row count and byte size are recorded in `app_setting` rather than recomputed: `count(*) WHERE source = 'extended'` can't use the `(term, source, rank)` index — `source` isn't its prefix — so reporting the size would scan the table.
+
+`app/settings.tsx` drives both halves. Installing also sets `preference.offlineDictionaryTier` to `extended`, because the *pack* is per-device while the *preference* is per-account: it's what tells a new phone to fetch it too.
 
 ## When the device has no answer
 
-The bundled pack holds single English words only, so a phrase, a name, or a rare word will miss. `useDefinition` then calls `dictionary.lookup` on the server, which asks Datamuse and caches the result for every other user ([API layer](/docs/api-layer#the-dictionary-router)) — and writes it into this device's `cached` tier on the way back, so the *next* lookup of that word needs no signal at all.
+The bundled pack holds single English words, one sense each, so a phrase, a name, or a coinage will miss — *sietch* is not in WordNet, and shouldn't be. `useDefinition` then calls `dictionary.lookup` on the server, which asks Datamuse and caches the result for every other user ([API layer](/docs/api-layer#the-dictionary-router)) — and writes it into this device's `cached` tier on the way back, so the *next* lookup of that word needs no signal at all.
 
 The order matters and is deliberate: **the device looks first, the network second.** Common words never reach the network at all. A measured lookup of "ephemeral" took 590 ms the first time and 4 ms once cached; a bundled hit takes neither.
 
