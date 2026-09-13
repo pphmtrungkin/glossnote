@@ -34,8 +34,10 @@ export const dictionaryEntry = pgTable(
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
     term: text("term").notNull(),
-    // Base definition from the bundled dataset or dictionary API — the
-    // deterministic part, never AI-generated.
+    // The definition readers see. A term resolved AI-first has it written by
+    // the model, inserted already enriched (`source` "ai_enhanced"); a row
+    // from the bundled dataset or Datamuse keeps the dictionary's wording, and
+    // enriching it never rewrites this column.
     definition: text("definition").notNull(),
     // AI-generated, shared across every user who looks this term up. Null
     // until enrichment runs, which is why `source` can still be "bundled" or

@@ -3,34 +3,47 @@ title: Book search
 description: The Hardcover GraphQL integration behind folder creation
 ---
 
-Creating a folder starts by finding the book. `book.search` proxies [Hardcover](https://docs.hardcover.app)'s GraphQL API, and the result the user picks is upserted into our own `book` table by `folder.create` — one round trip, no separate "create book" step.
+To create a folder, the user first finds the book.
 
-This is what makes crowdsourced discovery possible at all: two readers of the same book only end up pointing at the same `book.id` because both picked the same Hardcover result. Without it, `word.suggestions` has nothing to group by.
+`book.search` calls [Hardcover](https://docs.hardcover.app)'s GraphQL API. The result the user picks is then written into our own `book` table by `folder.create`. It is one round trip; there is no separate "create book" step.
 
-## Why this has to be server-side
+This is what makes crowdsourced discovery possible. Two readers of the same book point at the same `book.id` only because both picked the same Hardcover result. Without that, `word.suggestions` has nothing to group by.
 
-Hardcover's own documentation settles it: *"Queries are not allowed to run in the browser, they must be run in an environment where the token can be kept secure."* A token shipped inside the Expo bundle is extractable from the app binary, and the whole app shares one account's quota — one misbehaving client could exhaust it for everyone.
+## Why this must run on the server
 
-So `HARDCOVER_API_TOKEN` lives in `apps/server/.env`, validated in `packages/env/src/server.ts`, and is **never** an `EXPO_PUBLIC_*` variable. The native app calls our own tRPC procedure; our server calls Hardcover. This is the same rule the software spec applies to every third-party key.
+Hardcover's documentation is clear about it:
 
-The token is **optional**. Without one, `book.search` returns a clean `PRECONDITION_FAILED` and the app still works — you type a title and get a freeform folder. That fallback isn't a courtesy, it's the offline path the user flow requires: search needs connectivity, folder creation doesn't.
+> Queries are not allowed to run in the browser, they must be run in an environment where the token can be kept secure.
 
-## Rate limits shape the client
+A token inside the Expo bundle can be extracted from the app binary. And the whole app shares one account's quota, so one bad client could use it all up for everyone.
+
+So `HARDCOVER_API_TOKEN` lives in `apps/server/.env`, is validated in `packages/env/src/server.ts`, and must **never** become an `EXPO_PUBLIC_*` variable. The app calls our tRPC procedure; our server calls Hardcover. The same rule applies to every third-party key.
+
+The token is **optional**. Without one, `book.search` returns a clean `PRECONDITION_FAILED`, and the app still works: you type a title and get a freeform folder.
+
+That fallback is not a nice extra. It is the offline path the user flow requires. Search needs a connection; creating a folder does not.
+
+## Rate limits shape the client code
 
 | Limit | Free tier |
 | --- | --- |
 | Daily | 5,000 requests |
 | Per minute | 60 |
-| Burst | 10 back-to-back |
+| Burst | 10 in a row |
 | Top-level `search` queries per request | **1** |
 
-Two consequences baked into the code. The shelf screen debounces through `useDebouncedValue` and only queries at two characters or more — a request per keystroke would spend the per-minute budget on a single search. And because a request may carry only one `search` field, book lookups can never be batched together; `SEARCH_QUERY` is deliberately a single top-level field.
+Two rules follow from this, and both are already in the code:
 
-The API returns `RateLimit-Policy` and `RateLimit` headers on every response for proactive backoff. Nothing reads them yet — `book.search` just translates a `429` into `TOO_MANY_REQUESTS`.
+1. **The shelf screen debounces.** It waits with `useDebouncedValue` and only searches at two characters or more. One request per keystroke would spend the whole per-minute budget on a single search.
+2. **Searches can never be batched.** A request may carry only one `search` field, so `SEARCH_QUERY` has exactly one top-level field.
+
+Hardcover returns `RateLimit-Policy` and `RateLimit` headers on every response, so a client could slow down before hitting the wall. Nothing reads them yet. `book.search` only turns a `429` into `TOO_MANY_REQUESTS`.
+
+We also apply our own limit: 20 searches per minute per user. See [API layer](/docs/api-layer#both-proxies-have-a-request-budget).
 
 ## The query
 
-Hardcover's search is backed by [Typesense](https://typesense.org/), exposed through one GraphQL field:
+Hardcover's search runs on [Typesense](https://typesense.org/) and is exposed through one GraphQL field:
 
 ```graphql
 query SearchBooks($query: String!, $perPage: Int!) {
@@ -40,24 +53,32 @@ query SearchBooks($query: String!, $perPage: Int!) {
 }
 ```
 
-`results` is an untyped JSON scalar — the raw Typesense payload, `{ found, hits: [{ document }] }`. Hardcover documents which *fields are indexed* but not the shape of that JSON, so `mapSearchResults` parses it loosely: `hits` must be an array, everything inside a hit is permissive. An exact schema would break on Hardcover's deploys rather than ours.
+`results` is an untyped JSON value — the raw Typesense payload, shaped like `{ found, hits: [{ document }] }`.
 
-The one thing it will *not* tolerate is a missing `hits`. Accepting that as optional would turn "Hardcover changed their API" into a silent "no matches found" — indistinguishable from a genuinely empty result, and invisible until a user complains. Instead it throws, with 300 characters of the actual payload in the message.
+Hardcover documents which **fields are indexed**, but not the shape of that JSON. So `mapSearchResults` parses it loosely: `hits` must be an array, and everything inside a hit is optional. A strict schema would break whenever Hardcover deploys, not when we do.
+
+There is one exception. A **missing `hits`** throws an error.
+
+Why? If we accepted a missing `hits` as "no results", then "Hardcover changed their API" would look exactly like "this book does not exist". Nobody would notice until a user complained. Instead we throw, and the message includes the first 300 characters of the real payload.
 
 | `book` column | Hardcover field | Note |
 | --- | --- | --- |
-| `provider` | — | Always the literal `"hardcover"` |
-| `externalId` | `document.id` | Coerced to string; the API returns it as either |
+| `provider` | — | Always the literal string `"hardcover"` |
+| `externalId` | `document.id` | Converted to a string; the API returns either |
 | `title` | `document.title` | |
 | `authors` | `document.author_names` | Defaults to `[]` |
 | `coverImageUrl` | `document.image.url` | **Optional** — see below |
 | `description` | `document.description` | |
 
-`image` is *not* in Hardcover's documented list of indexed book fields, so a cover is treated as maybe-absent rather than assumed. The shelf renders a book icon placeholder when it's null, and the smoke test asserts a hit with no image maps to `null` instead of crashing.
+`image` is **not** in Hardcover's documented list of indexed book fields. So we treat a cover as possibly missing instead of assuming it exists. The shelf shows a book icon when it is null, and `db:smoke` checks that a hit with no image maps to `null` and does not crash.
 
-## Why `provider`/`externalId` are plain text
+## Why `provider` and `externalId` are plain text
 
-This is the schema decision that makes the provider swappable without a migration. `provider` is just `"hardcover"` today and `externalId` is whatever Hardcover calls that book's ID; adding a second source, or migrating off Hardcover entirely, is a different string in an existing column rather than an `ALTER TABLE`. The pair is uniquely indexed, which is what makes the upsert idempotent.
+This is the schema choice that lets us change providers without a migration.
+
+Today `provider` is always `"hardcover"`, and `externalId` is whatever id Hardcover uses. Adding a second source, or moving off Hardcover completely, is a different string in an existing column — not an `ALTER TABLE`.
+
+The two columns together have a unique index. That is what makes the insert-or-update safe to run twice.
 
 ## Linking a book to a folder
 
@@ -67,28 +88,55 @@ This is the schema decision that makes the provider swappable without a migratio
 book: z.object({ externalId, title, authors, coverImageUrl, description }).optional()
 ```
 
-A client-supplied `bookId` would be an unvalidated foreign key arriving from an untrusted source. Passing the hit itself means the server decides what row exists. It upserts on the unique `(provider, external_id)` pair before inserting the folder:
+A `bookId` from a client would be an unvalidated foreign key from an untrusted source. By sending the search result itself, the server decides which row exists.
+
+It inserts or updates on the unique `(provider, external_id)` pair, then inserts the folder:
 
 ```ts
 .onConflictDoUpdate({ target: [book.provider, book.externalId], set: { title, authors, coverImageUrl, description } })
 ```
 
-`DO UPDATE` rather than `DO NOTHING` on purpose — Hardcover fills in covers and descriptions after a book is first indexed, so re-picking a book refreshes stale metadata instead of preserving whatever we happened to cache first. Every reader of Dune ends up pointing at exactly one `book` row, which is what lets the crowdsourced aggregate group correctly.
+Two decisions inside that:
 
-Doing the upsert *inside* the mutation also avoids an orphaned `book` row when folder creation fails — the alternative, a separate `book.create` call from the client, leaves one behind every time the second step errors.
+- **`DO UPDATE`, not `DO NOTHING`.** Hardcover adds covers and descriptions after a book is first indexed. So picking a book again refreshes old data, instead of keeping whatever we cached first. Every reader of Dune ends up on exactly one `book` row, which is what lets the crowdsourced query group correctly.
+- **The insert happens inside the mutation.** If folder creation fails, no `book` row is left behind. The alternative — a separate `book.create` call from the client — leaves an orphan row every time the second step fails.
 
 ### One folder per book
 
-`folder_userId_bookId_uidx` is a partial unique index on `(user_id, book_id) WHERE book_id IS NOT NULL`: one folder per book per user, unlimited freeform folders. Before book search existed nothing could trigger it. Now "add Dune twice" is an ordinary user action, so `folder.create` catches the `23505` and rethrows it as `CONFLICT — "You already have a folder for this book."`
+`folder_userId_bookId_uidx` is a partial unique index:
 
-Drizzle wraps driver errors, so the Postgres `constraint` name is on the error's `cause`, not its message. The `violates()` helper walks the chain rather than matching on message text.
+```sql
+UNIQUE (user_id, book_id) WHERE book_id IS NOT NULL
+```
+
+So a user may have one folder per book, and unlimited freeform folders.
+
+Before book search existed, nothing could trigger this index. Now "add Dune twice" is a normal user action. So `folder.create` catches the Postgres error `23505` and rethrows it as `CONFLICT` with the message "You already have a folder for this book."
+
+One trap: Drizzle wraps driver errors, so the Postgres `constraint` name is on the error's `cause`, not on its message. The `violates()` helper walks the `cause` chain instead of matching on message text.
 
 <Callout type="warn">
-Linking happens **only at folder creation**. There is deliberately no `folder.updateBook`: `word.bookId` is snapshotted from `folder.bookId` at capture time, so attaching a book to an existing folder would strand every word already in it outside the aggregate. If that feature is ever added, the same transaction must also run `update word set book_id = ... where folder_id = ...`.
+Linking happens **only when the folder is created**.
+
+There is deliberately no `folder.updateBook`. `word.bookId` is copied from `folder.bookId` at the moment a word is saved. So attaching a book to an existing folder would leave every word already in it outside the crowdsourced query.
+
+If that feature is ever added, the same transaction must also run:
+
+```sql
+update word set book_id = ... where folder_id = ...
+```
 </Callout>
 
-## What's verified, and what isn't
+## What is tested, and what is not
 
-`bun run db:smoke` covers the mapping against a fixture payload (including a hit with no cover, and numeric vs. string IDs), the upsert-and-link path, the duplicate-link conflict message, `word.bookId` inheritance, and re-picking reusing one row while refreshing its metadata.
+`bun run db:smoke` covers:
 
-It never calls Hardcover — `mapSearchResults` is exported from `routers/book.ts` precisely so the mapping can be asserted without a token or a rate-limited round trip. Which means the one thing still unverified is whether Hardcover's live `results` payload matches the documented shape. Add a token and run a real search; if it doesn't match, the thrown error hands you the raw response.
+- the mapping, using a saved example payload (including a hit with no cover, and numeric versus string ids)
+- the insert-and-link path
+- the duplicate-link conflict message
+- `word.bookId` being inherited from the folder
+- picking a book again reusing one row and refreshing its data
+
+It never calls Hardcover. `mapSearchResults` is exported from `routers/book.ts` exactly so the mapping can be tested without a token and without spending quota.
+
+So one thing is still untested: whether Hardcover's live `results` payload matches the documented shape. To check, add a token and run a real search. If the shape is wrong, the thrown error gives you the raw response.

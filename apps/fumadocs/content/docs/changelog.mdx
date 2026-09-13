@@ -3,15 +3,149 @@ title: Changelog
 description: What changed, when, and why — newest first
 ---
 
-Notable changes to the codebase, newest first. This tracks *decisions and their reasons*, not every commit — for the full list, read `git log`. Anything marked **Breaking** changes behaviour an existing caller depends on.
+Notable changes to the codebase, newest first.
+
+This page records **decisions and their reasons**, not every commit. For the full list, read `git log`.
+
+Anything marked **Breaking** changes behaviour that an existing caller depends on.
 
 ## Unreleased
 
+### Definitions are read-only, and every word shows how it is used
+
+**Breaking** for `word.update`: it no longer accepts `definitionOverride`. An old client that still sends one has the field stripped, not stored.
+
+A reader can no longer write or change a definition anywhere:
+
+| Where | Before | Now |
+| --- | --- | --- |
+| Add-word screen | An editable box, pre-filled from the lookup | The resolved definition, shown as text |
+| `word.update` | Accepted `definitionOverride` | No definition field. `db:smoke` asserts an old client's edit is dropped |
+| A word no dictionary knows | "Type a definition below" | "Save it anyway, and write what it means in your note" |
+
+Why: definitions now come from a dictionary or the server's AI lookup, and the lookup is careful about what it defines — a word invented for a book is deliberately left blank. A reader's own wording already had a home in `personalNote`, which sits next to the definition instead of replacing it.
+
+`word.create` still takes a `definition`, because an offline capture carries the phone dictionary's wording. The add-word screen only sends the definition it showed, and only when it belongs to the exact term being saved: the lookup runs on a debounced copy of the field, so a quick Save could otherwise file the previous word's definition.
+
+**The "In use" section.** `components/word-usage.tsx` shows every AI example sentence, with the word itself in bold, and the usage note on where the word is used. It appears in two places:
+
+- **Add word**, under the definition, as soon as the lookup returns.
+- **The word screen**, which used to show only the first sentence. The other two had been written for every enriched word and read only by the quiz.
+
+`useDefinition`'s `found` result now carries `contexts` and `usageNote`. Both exist only on the server's shared row, so an offline answer has `[]` and `null`, and the section falls back to the offline dictionary's example sentence or hides itself.
+
+### Online definitions are written by AI, and the model is now Gemini
+
+**Breaking** for `useDefinition`: a device with a connection now asks the server even for a word its own dictionary holds.
+
+**The phone.** `useDefinition` asks `dictionary.lookup` whenever `useIsOnline` reports a connection. The device dictionary answers when the phone is offline, when the server fails, or when the server has no entry. `useIsOnline` (`hooks/use-is-online.ts`) is the connectivity check `usePendingSync` already had, moved out so both share one rule. Connectivity is part of the query key, so regaining a signal re-resolves an offline answer.
+
+**The server.** A term with no shared row now goes through three checks:
+
+1. **Datamuse decides whether it is a word.** No exact match returns `null`, and the model is never asked.
+2. **The model writes what it means.** `defineTerm` returns the definition, contexts and usage note in one call, and the row is saved already enriched. An empty definition means "not a general English word", and returns `null`.
+3. **Only a failed AI call** saves Datamuse's own definition, then enriches it the old way.
+
+Why each part is there:
+
+| Decision | Reason |
+| --- | --- |
+| AI writes the definition | The UserFlow's online mode asks for an AI-enhanced definition. This departs from SoftwareSpec §8.3, which kept AI to the example and the note |
+| Datamuse is asked first | Gemini defined "sietch" from *Dune* on every call, even at temperature 0, and its own usage note called the word invented. A prompt is not a spoiler guard |
+| A model's empty definition is trusted over Datamuse | Datamuse's sources include fiction: it knows "horcrux" |
+| `temperature: 0` | At the default, "sietch", "dementor" and "mellon" each came back blank on one call and defined on the next. The first answer is saved for every reader |
+| No `known: boolean` field | The model answered `known: false` for "ephemeral" |
+| In-flight requests and an unknown-word list in server memory | A new term has no row for `enrichedAt` to lock. Per process only; the `ponytail:` comment in `routers/dictionary.ts` marks it |
+
+**The model** moved from `zai/glm-4.7-flashx` to `google/gemini-2.5-flash-lite`. In a run of 14 cheap gateway models on five words, GLM got 2 right with a 17-second median at about $0.35 per 1,000 new words. Gemini got 4 right in 1.3 seconds at about $0.08. See [Choosing the model](/docs/ai-enrichment#choosing-the-model) for the full table.
+
+**Measured end to end** on 2026-09-13, through `appRouter` against a local Postgres and the live gateway:
+
+| Lookup | Time | AI calls | Result |
+| --- | --- | --- | --- |
+| "laconic", first time | 2.1 s | 1 | Saved already enriched: definition and three contexts |
+| "apricity", first time | 1.1 s | 1 | Saved already enriched |
+| "lembas", first time | 18 ms | 0 | `null`. Datamuse does not know it |
+| "horcrux", first time | 1.2 s | 1 | `null`, no row. The model left it blank |
+| Each of those again | 2–5 ms | 0 | Served from the row, or remembered |
+| "sesquipedalian", two lookups at once | — | 1 | One row, the same id for both |
+
+`db:smoke` still skips its AI checks when `AI_GATEWAY_API_KEY` is set, so none of this runs there.
+
+### The offline queue now has a device half
+
+`word.createMany` had been the tested flush endpoint with nothing calling it. The phone side is now written, so saving a word with no signal works end to end.
+
+Three new files:
+
+| File | Job |
+| --- | --- |
+| `lib/pending-sync.ts` | Write a queued row, read the queue, send it, delete the rows the server accounted for |
+| `hooks/use-capture-word.ts` | The one save path both capture screens use |
+| `hooks/use-pending-sync.ts` | Mounted once in `_layout.tsx`. Flushes when `expo-network` reports a connection |
+
+Both capture screens — the add-word form and a tapped suggestion on the shelf — now go through `useCaptureWord`. That is on purpose. With two separate mutations, the offline fallback would have been wired into one screen and forgotten in the other.
+
+The queue only accepts a word when the request **never arrived**:
+
+```ts
+export function isOfflineError(error: unknown) {
+  return error instanceof TRPCClientError && error.data == null;
+}
+```
+
+A tRPC error thrown by a procedure carries `data`. A `fetch` that never completed carries none. Queueing on any error would put a `NOT_FOUND` folder in the queue forever.
+
+The flush loops, because the queue may hold more than one batch of 100. It stops as soon as a batch accounts for nothing, so a flush that deletes no rows cannot read the same page forever.
+
+Failures during a flush are silent. The reader did not ask for it to happen now, and the queue is left exactly as it was.
+
+### Rate limiting on the auth endpoints and the two proxies
+
+Two separate limiters, because they guard different things.
+
+**Better Auth** ([Authentication](/docs/authentication#rate-limiting)) is now enabled explicitly instead of being left to its default.
+
+That default is the bug worth knowing about. Better Auth enables its limiter only in production, and it decides that by reading `NODE_ENV`. Our own env schema defaults `NODE_ENV` to `"development"`. So a deployment that forgot to set it would have run with **no rate limiting at all**, silently.
+
+Version 1.7.1 already ships strict rules for sign-in, sign-up and password paths (3 per 10 seconds). We add a floor of 100 per minute, plus a custom rule of 5 per hour for `/delete-user`, which the built-in list does not cover and which cascades a user's entire data.
+
+**The two API proxies** now carry a per-user budget (`packages/api/src/rate-limit.ts`): 20 per minute for `book.search`, 60 per minute for `dictionary.lookup`.
+
+Both spend someone else's quota. Hardcover allows 60 requests a minute for the whole token, shared by every reader of the app, so one client in a retry loop could spend everybody's.
+
+The middleware runs before the procedure body. `db:smoke` asserts that with no token configured: 20 calls reach the handler, the 21st is refused, and a second caller starts from a full budget.
+
+<Callout type="info">
+Both limiters count in memory, so budgets are per server process and reset on deploy. That is the right trade for one instance, and both carry a `ponytail:` comment naming the upgrade — Better Auth's `storage: "database"`, or a shared store for the tRPC one.
+</Callout>
+
+### Auth screens rebuilt on plain React Native inputs
+
+Sign-in and sign-up are now separate screens (`app/(auth)/sign-in.tsx`, `app/(auth)/sign-up.tsx`) instead of one screen carrying both forms. They replace each other with `router.replace`, so the back stack never grows a chain of them.
+
+The forms use plain `TextInput`, not HeroUI's `TextField` / `Input` / `InputGroup`. One shared component, `components/text-field.tsx`, owns the label, the error message, the focus ring, and the show/hide toggle on password fields.
+
+The focus ring is local state, because React Native has no `:focus` pseudo-class. A border that changes on focus has to be told when that happens.
+
+Errors are now rendered **per field**. TanStack Form buckets a schema's issues by field path, so `field.state.meta.errors` already holds the message for that input. The single form-level error above the fields is gone.
+
+<Callout type="info">
+Two theme tokens changed while fixing invisible inputs. HeroUI ships form fields with `--field-border-width: 0px`, and every theme in `global.css` set `--field-border: transparent`. Since `--field-background` equals the page colour in most themes, inputs had no visible edge at all.
+
+`global.css` now sets a 1px field border width and a 2px `--field-radius` (matching `--radius-card`), and each theme points `--field-border` at its own separator. That applies to every HeroUI input in the app, not only the ones in auth.
+</Callout>
+
 ### A bundled dictionary, and a downloadable pack
 
-The offline dictionary is real. `core` — 74,441 terms, 9.2 MB — ships in the app binary and merges on first launch, so a reader who has never had signal still gets definitions. `extended` — 127,311 terms across 185,129 senses, 25 MB — downloads from Settings once `EXPO_PUBLIC_DICTIONARY_PACK_URL` points at a hosted file. See [Offline dictionary](/docs/offline-dictionary#getting-the-two-tiers-onto-a-device).
+The offline dictionary is real.
 
-Both land through the same three statements. SQLite copies the rows itself; nothing is parsed in JS:
+- `core` — 74,441 terms, 9.2 MB — ships in the app binary and merges on first launch. So a reader who has never had signal still gets definitions.
+- `extended` — 127,311 terms across 185,129 senses, 25 MB — downloads from Settings, once `EXPO_PUBLIC_DICTIONARY_PACK_URL` points at a hosted file.
+
+See [Offline dictionary](/docs/offline-dictionary#getting-the-two-tiers-onto-a-device).
+
+Both arrive through the same three statements. SQLite copies the rows itself; nothing is parsed in JavaScript:
 
 ```sql
 ATTACH DATABASE ? AS pack;
@@ -19,184 +153,269 @@ INSERT OR IGNORE INTO dictionary (...) SELECT ..., ?, rank FROM pack.dictionary;
 DETACH DATABASE pack;
 ```
 
-74,441 core rows in 86 ms; 184,356 extended rows in 272 ms.
+Measured: 74,441 core rows in 86 ms, and 184,356 extended rows in 272 ms.
 
 <Callout type="warn">
-The bundled core is **merged, not handed to `SQLiteProvider` as `assetSource`** — which was the documented plan and is a trap. The built asset carries only the `dictionary` table, but the build script stamps `PRAGMA user_version = 3` on it, so `migrateLocalDb` would return early and never create `pending_sync` or `app_setting`; the first theme save would throw on a fresh install. Merging costs one copy of the rows, keeps `local-db.ts` the only owner of the schema, and works on upgrade — where `assetSource` does nothing, because the database already exists.
+The bundled core is **merged**, not handed to `SQLiteProvider` as `assetSource`. That was the documented plan, and it is a trap.
+
+The built asset contains only the `dictionary` table, but the build script stamps `PRAGMA user_version = 3` on it. So `migrateLocalDb` would return early and never create `pending_sync` or `app_setting`, and the first theme save would crash on a fresh install.
+
+Merging costs one copy of the rows, keeps `local-db.ts` the only owner of the schema, and works on an app upgrade — where `assetSource` does nothing, because the database already exists.
 </Callout>
 
-The pack is hosted as a **plain static file**, deliberately not served by `apps/server`: tRPC is the wrong transport for a 25 MB binary, and a static host keeps the download alive when the API is down.
+The pack is hosted as a **plain static file**, deliberately not served by `apps/server`. tRPC is the wrong transport for a 25 MB binary, and a static host keeps the download working when the API is down.
 
 ### The WordNet pipeline, fixed and pinned
 
-`wordnet-to-dictionary.ts` had never been run end to end. It produced **963 words**. Three bugs, none of which errored:
+`wordnet-to-dictionary.ts` had never been run end to end. It produced **963 words**.
 
-- It built lemmas from `src/sense-orders.csv`, which is not the lemma index — it's ~1,300 rows of manual sense-order *corrections*. The vocabulary is in `entries-*.json`. That alone was 963 → 75,113.
-- Sense rank restarted at 0 per part of speech, but the device index is unique on `(term, source, rank)` — so "run" as a verb would have collided with "run" as a noun and `INSERT OR IGNORE` would have dropped senses silently.
-- WordNet examples aren't always strings; attributed quotations are `{ source, text }` objects, and 589 of them reached the SQLite driver as unbindable values.
+Three bugs, and none of them raised an error:
 
-The source also moved from `src/yaml/*` on `main` to the **JSON export attached to a tagged release**: 72 requests became one 9.5 MB zip, minutes became two seconds, and the build is reproducible. `main` had already drifted past the 2025 release — 107,528 synsets against 107,519 — which is enough for two builds of "the dictionary" to be quietly different artifacts. Dropped the `yaml` dependency; `unzip` is now a build-time requirement.
+1. It built lemmas from `src/sense-orders.csv`, which is not the lemma index. That file holds about 1,300 rows of manual sense-order **corrections**. The real vocabulary is in `entries-*.json`. Fixing this alone took 963 words to 75,113.
+2. Sense rank restarted at 0 for each part of speech. But the device index is unique on `(term, source, rank)`. So "run" as a verb would have collided with "run" as a noun, and `INSERT OR IGNORE` would have dropped senses silently.
+3. WordNet examples are not always strings. Attributed quotations are `{ source, text }` objects, and 589 of them reached the SQLite driver as values it cannot bind.
+
+The source also moved. It used to read `src/yaml/*` from `main`; it now reads the **JSON export attached to a tagged release**.
+
+That change turned 72 requests into one 9.5 MB zip, minutes into two seconds, and made the build reproducible. `main` had already drifted past the 2025 release — 107,528 synsets against 107,519 — which is enough for two builds of "the dictionary" to be quietly different files.
+
+The `yaml` dependency was dropped. `unzip` is now a build-time requirement.
 
 ### The review run, the word screen, and settings
 
-Three more screens off the design canvas, all on procedures that already existed and had no caller.
+Three more screens from the design canvas. All three sit on procedures that already existed and had no caller.
 
-**`review`** renders `word.quiz`: a progress rail, the blanked sentence, and a reveal carrying the definition and usage note. The run is fetched once and never refetched mid-session — stamping a review would reorder the deck under the reader. The design's three grades collapse to two, because `word.update` records a review as a timestamp and not a grade; "Almost" and "Got it" would write the identical row.
+**`review`** renders `word.quiz`: a progress rail, the blanked sentence, and a reveal with the definition and usage note. The run is fetched once and never refetched during the session, because stamping a review would reorder the deck while the reader is using it.
 
-**`word/[id]`** is the first screen to render `dictionary_entry.exampleSentence` and `usageNote`. It reads its row from the folder list's cache rather than adding a `word.byId` — the previous screen just fetched it.
+The design's three grades became two. `word.update` records a review as a timestamp, not a grade, so "Almost" and "Got it" would write exactly the same row.
 
-**`settings`** is the first caller of `preference.get`/`update`, and hosts the dictionary download. Sign-out moved into it from its own tab-header button; the header slot is now a gear.
+**`word/[id]`** is the first screen to render `dictionary_entry.exampleSentence` and `usageNote`. It reads its row from the folder list's cache instead of adding a `word.byId` procedure, because the previous screen already fetched it.
 
-`shelf`, `folder/[id]` and `search` were restyled to the canvas at the same time. `folder.list` gained a `wordCount` — one grouped query, which let the home page drop a `listByFolder` call it was making purely to count.
+**`settings`** is the first caller of `preference.get` and `preference.update`, and it hosts the dictionary download. Sign-out moved into it from its own tab-header button; that slot is now a gear icon.
 
+`shelf`, `folder/[id]` and `search` were restyled to the canvas at the same time. `folder.list` gained a `wordCount` from one grouped query, which let the home page drop a `listByFolder` call it was making only to count rows.
 
 ### A welcome screen and a home page, from the design canvas
 
-Two screens built from the Claude Design project, in the app's own colour scheme rather than the design system's: the canvas is cyan-and-magenta on a Broadsheet system, and this app is Ochre spot, so what came across is layout, hierarchy and copy.
+Two screens built from the Claude Design project, in this app's own colours. The canvas is cyan and magenta on a Broadsheet system; this app is Ochre spot. So what came across is the layout, the hierarchy and the copy.
 
-**Welcome** (`app/(auth)/index.tsx`) is the group's index, so a signed-out reader lands there rather than on a bare form. Both buttons lead to `sign-in`, which already renders sign-in and sign-up together — two buttons because the design asks a returning reader a different question, one destination because there is only one. No "seen once" flag: signed-out is the condition it renders on.
+**Welcome** (`app/(auth)/index.tsx`) is the group's index, so a signed-out reader lands there instead of on a bare form. There is no "seen once" flag: being signed out is the condition it renders on.
 
-**Home** (`app/(tabs)/index.tsx`) is a new landing tab. The shelf **moved to `/shelf`** with its own tab rather than being replaced — it owns folder creation and Hardcover search, and the design treats home and shelf as different screens anyway. Home shows a greeting and due count, "currently reading" from the newest `reading` folder with its book and saved-word count, a three-up capture row, and the first three due words with the mastery dot the scheme reserves for exactly that.
+**Home** (`app/(tabs)/index.tsx`) is a new landing tab. The shelf **moved to `/shelf`** with its own tab, rather than being replaced — it owns folder creation and Hardcover search, and the design treats home and shelf as different screens.
 
-`word.quiz` cards gained a `state` (`new` until first review, `learning` after) to feed those dots.
+Home shows a greeting and due count, "currently reading" from the newest `reading` folder with its book and saved-word count, a three-button capture row, and the first three due words with their mastery dots.
+
+`word.quiz` cards gained a `state` (`new` until the first review, `learning` after) to feed those dots.
 
 <Callout type="warn">
-Four designed elements are deliberately not implemented, because nothing stands behind them. **Scan page** and **Say it** render disabled — OCR is out of scope for V1 (SoftwareSpec §11) and voice needs an STT library nobody has picked. **Start review** is omitted rather than disabled, since `word.quiz` already serves it and only the screen is missing. **Reading progress** and the **streak line** are dropped outright: there is no progress or streak in the data model, and a landing screen that invents numbers is worse than a quieter one. The onboarding copy also lost its "point your camera at a page" promise for the same reason.
+Four designed elements are deliberately not implemented, because nothing stands behind them.
+
+**Scan page** and **Say it** render disabled: OCR is out of scope for V1 (SoftwareSpec §11), and voice needs a speech-to-text library nobody has chosen.
+
+**Start review** was omitted rather than disabled, because `word.quiz` already served it and only the screen was missing. (That screen now exists.)
+
+**Reading progress** and the **streak line** were dropped completely. There is no progress or streak in the data model, and a landing screen that invents numbers is worse than a quieter one. The onboarding copy also lost its "point your camera at a page" promise, for the same reason.
 </Callout>
 
-The canvas's headline is a CMYK print treatment — three misregistered plates built from `mix-blend-mode`, SVG `feColorMatrix` filters and a pointer-driven registration animation. None of that exists in React Native, and its inks are the colours this app doesn't use, so the headline is set plainly in the reading face.
+The canvas headline is a CMYK print effect: three misaligned plates built from `mix-blend-mode`, SVG `feColorMatrix` filters, and a pointer-driven animation. None of that exists in React Native, and its inks are colours this app does not use. So the headline is set plainly in the reading font.
 
 ### Usage contexts, and a quiz built out of them
 
-Enrichment now returns three usage sentences per term instead of one, each with the word **brace-marked** — `"The house had an {eldritch} stillness about it."` — and `word.quiz` turns them into fill-in-the-blank cards over the reader's own words ([API layer](/docs/api-layer#wordquiz)).
+Enrichment now returns three usage sentences per term instead of one. In each, the word is **wrapped in braces**:
 
-The marking is the whole design. One stored string becomes both a context panel entry (braces stripped) and a cloze card (span replaced by a blank, its contents kept as the answer), so neither reader has to find the word in the sentence. Searching for the term at read time would blank the wrong span or none at all — a context for "run" may say "running" — and a card whose prompt contains its own answer is worse than no card. `parseContext` in `@better-vocab/domain` is the one definition of that format, read by the quiz builder, the app's panel, and enrichment's own validation.
+```
+"The house had an {eldritch} stillness about it."
+```
 
-The quiz **costs no AI call of its own**: contexts live on the shared, term-keyed row, so every card was generated by the one enrichment call that term will ever get, however many readers quiz on it. `exampleSentence` is no longer generated separately either — it's the first context with its braces removed, so there's one artifact to get right instead of two that can disagree.
+`word.quiz` turns them into fill-in-the-blank cards over the reader's own words ([API layer](/docs/api-layer#wordquiz)).
 
-A word is excluded for one of three reasons, each a rule rather than an accident: it's `mastered` (which is what mastering is *for*), it has no resolved entry (captured offline, never looked up — no sentence to blank), or its entry carries no contexts.
+The braces are the whole design. One stored string becomes both a context panel entry (braces removed) and a quiz card (the braced part replaced by a blank, its contents kept as the answer). Neither reader has to find the word in the sentence.
+
+Searching for the term at read time would blank the wrong part, or nothing at all — a context for "run" may say "running". And a card whose question contains its own answer is worse than no card.
+
+`parseContext` in `@better-vocab/domain` is the one definition of that format. Three callers read it: the quiz builder, the app's context panel, and enrichment's own validation.
+
+The quiz **costs no AI call of its own**. Contexts live on the shared, term-keyed row, so every card came from the one enrichment call that term will ever get, no matter how many readers quiz on it.
+
+`exampleSentence` is no longer generated separately either. It is the first context with its braces removed, so there is one thing to get right instead of two that can disagree.
+
+A word is excluded from a deck for one of three reasons, each a rule rather than an accident: it is `mastered` (which is what mastering is **for**), it has no resolved entry (saved offline, never looked up, so there is no sentence to blank), or its entry carries no contexts.
 
 <Callout type="info">
-The card sort ends on `word.id`. Words written in one statement — an offline flush, or the seed — share `createdAt` to the microsecond, and without a total order Postgres may return them differently between calls; a quiz that reshuffles on every open reads as a bug in the session rather than a missing sort key. `db:smoke` caught that on its second run, which is the case a single-run test would have missed.
+The card sort ends on `word.id`. Words written in one statement — an offline flush, or the seed — share `createdAt` down to the microsecond. Without a total order, Postgres may return them differently between calls, and a quiz that reshuffles on every open reads like a bug in the session rather than a missing sort key.
+
+`db:smoke` caught that on its second run, which is the case a single-run test would have missed.
 </Callout>
 
-Migration `0003_add_dictionary_contexts`. `db:smoke` is at 38 checks.
+Migration `0003_add_dictionary_contexts`. `db:smoke` reached 38 checks.
 
 ### The Ochre spot scheme, as the default page theme
 
-The app opens on **Ochre spot**: a single-accent scheme where ochre is spent only on the reader's own saved words and the one main action per screen, and everything else is ink, paper, or grey. Other readers' data stays muted by rule — crowdsourced counts are reference material, not the reader's progress. See [Theming](/docs/theming).
+The app now opens on **Ochre spot**: one accent colour, spent only on the reader's own saved words and the single main action per screen. Everything else is ink, paper or grey.
 
-`ochre` is the default page, and the scheme's night half replaces Kindle's true-black `dark`: both are "the dark theme", and keeping a `#000` page with an unrelated blue accent would have left one theme outside the new system. Kindle's Sepia and Green stay untouched — page colours are a different axis from an accent scheme.
+Other readers' data stays grey by rule. Crowdsourced counts are reference material, not the reader's progress. See [Theming](/docs/theming).
 
-An earlier draft of this entry described daisyUI's `autumn` palette in this slot. That scheme was replaced before release, and the daisyUI dependency came out with it rather than being left installed with no consumer.
+`ochre` is the default page, and the scheme's night half replaces Kindle's true-black `dark`. Both are "the dark theme", and keeping a `#000` page with an unrelated blue accent would have left one theme outside the new system.
 
-The scheme arrived as a NativeWind v4 drop — a `tailwind.config.js`, `@tailwind base;` directives, colours as space-separated RGB channels for `<alpha-value>`. None of that applies to this app, which runs Uniwind with Tailwind v4: CSS-first, no JS config, and alpha handled by v4 itself. What ported is the palette and its rules.
+Kindle's Sepia and Green are untouched. Page colours are a different axis from an accent scheme.
 
-Its own vocabulary — `primary-pressed`, `primary-tint`, the three mastery states — is registered as Tailwind colours, so `bg-primary`, `text-ink/70` and `text-state-learning` compile to real RN styles. The tokens that *have* a HeroUI counterpart are declared as aliases (`--color-ink: var(--foreground)`) rather than copies, so they follow the page the reader chose instead of freezing at one theme's value — verified in the bundle, where `--color-ink` compiles to a function reading `--foreground` rather than a literal.
+An earlier version of this entry described daisyUI's `autumn` palette in this slot. That scheme was replaced before release, and the daisyUI dependency came out with it instead of being left installed with no consumer.
 
-**A `DEFAULT_THEME` constant does not make a theme the default.** Uniwind starts on `light` with no config option to change it, and `light` is a theme a reader can legitimately pick — so "current theme is light" and "reader hasn't chosen" are indistinguishable at read time, which made the existing read-side fallback dead code. The absence of a *stored* value now selects the default, applied in the load effect behind the `isThemeReady` gate that already holds the splash.
+The scheme arrived as a NativeWind v4 drop: a `tailwind.config.js`, `@tailwind base;` directives, and colours as space-separated RGB channels for `<alpha-value>`. None of that applies to this app, which runs Uniwind with Tailwind v4 — CSS-first, no JS config, and alpha handled by v4 itself. What ported is the palette and its rules.
 
-`The reading face moves to **Source Serif 4**, which is what the scheme asks for — five faces (regular, italic, medium, semibold, bold), with `font-body` / `font-heading` / `font-italic` aliased onto them so the face is one edit rather than five. Literata, which stood in for Bookerly while the Kindle pages were the whole design, came out with it. React Native registers each face as its own family, so italic is `font-italic` rather than the `italic` utility.
+Its own vocabulary — `primary-pressed`, `primary-tint`, the three mastery states — is registered as Tailwind colours, so `bg-primary`, `text-ink/70` and `text-state-learning` compile to real React Native styles.
 
-`lib/palette.ts` serves the places a className can't reach (StatusBar, SVG fills, `Animated`), re-exporting the scheme's values so ochre has one spelling. Its `usePalette()` reads the app's theme context rather than RN's `useColorScheme()`: the theme here is a persisted choice across five pages, not a mirror of the OS setting.
+The tokens that **have** a HeroUI counterpart are declared as aliases (`--color-ink: var(--foreground)`), not copies. So they follow the page the reader chose instead of freezing at one theme's value. Verified in the bundle, where `--color-ink` compiles to a function reading `--foreground` rather than a literal string.
+
+<Callout type="warn">
+**A `DEFAULT_THEME` constant does not make a theme the default.**
+
+Uniwind starts on `light`, with no config option to change it. And `light` is a theme a reader can legitimately pick, so "the current theme is light" and "the reader has not chosen" are identical when you read the value. That made the existing read-side fallback dead code.
+
+The **absence of a stored value** now selects the default. It is applied in the load effect, behind the `isThemeReady` gate that already holds the splash screen.
+</Callout>
+
+The reading font moved to **Source Serif 4**, which is what the scheme asks for. Five faces ship (regular, italic, medium, semibold, bold), with `font-body`, `font-heading` and `font-italic` aliased onto them, so changing the face is one edit instead of five.
+
+Literata, which stood in for Bookerly while the Kindle pages were the whole design, came out with it. React Native registers each face as its own family, so italic is `font-italic`, not the `italic` utility.
+
+`lib/palette.ts` serves the places a className cannot reach (StatusBar, SVG fills, `Animated`). It re-exports the scheme's values, so ochre has one spelling. Its `usePalette()` reads the app's theme context, not React Native's `useColorScheme()`: the theme here is a saved choice across five pages, not a mirror of the OS setting.
 
 <Callout type="info">
-Adding a theme touches three files in step — the `@variant` block, `extraThemes` in `metro.config.js`, and `READING_THEMES` in the theme context — and then needs a Metro restart, because the theme union in `uniwind-types.d.ts` is generated from `extraThemes` and gitignored. A stale one is what makes `Uniwind.setTheme("autumn")` fail to typecheck.
+Adding a theme touches three files together — the `@variant` block, `extraThemes` in `metro.config.js`, and `READING_THEMES` in the theme context — and then needs a Metro restart. The theme union in `uniwind-types.d.ts` is generated from `extraThemes` and is gitignored, so a stale copy is what makes `Uniwind.setTheme("ochre")` fail to typecheck.
 </Callout>
 
 ### The rest of the server: AI enrichment, notes, reviews, renames, account deletion
 
-Every column and every flow section that had a server-side half missing now has one. What's left in [Implementation status](/docs/implementation-status) is screens, an asset, and two library choices.
+Every column and every flow section that was missing its server half now has one. What is left in [Implementation status](/docs/implementation-status) is screens, an asset, and two library choices.
 
-**AI enrichment, once per word, for everyone** ([new docs page](/docs/ai-enrichment)). `dictionary.lookup` now finishes by adding an example sentence and a usage note to the shared `dictionaryEntry` row. `exampleSentence`, `usageNote` and `enrichedAt` had been schema with no producer since the first migration.
+**AI enrichment, once per word, for everyone** ([new docs page](/docs/ai-enrichment)). `dictionary.lookup` now finishes by adding an example sentence and a usage note to the shared `dictionaryEntry` row. Those three columns had been schema with no producer since the first migration.
 
-`enrichedAt` is both the marker and the lock: the claim is a conditional update (`SET enriched_at = now() WHERE enriched_at IS NULL`) taken *before* the call, so two readers hitting the same brand-new word buy one enrichment between them rather than one each. That is what makes the spec's cost target — each unique word triggers at most one AI call across the entire user base — true under concurrency rather than only on paper. A failed call releases the claim, so a timeout costs the term nothing worse than staying plain until its next lookup.
+`enrichedAt` is both the marker and the lock. The claim is a conditional update (`SET enriched_at = now() WHERE enriched_at IS NULL`) taken **before** the call. So two readers who hit the same brand-new word buy one enrichment between them, not one each.
 
-The provider sits behind one function, `enrichDefinition` (`packages/api/src/enrich.ts`), calling the model through [Vercel AI Gateway](/docs/ai-enrichment#swapping-the-model) with `generateObject` and a Zod schema. The model is one `provider/model` string (`zai/glm-4.7-flashx`, ~$0.06/$0.40 per million tokens), so changing model *or vendor* is that line — no second SDK, account, or key, and never the tRPC contract. A small/fast tier on purpose: an example sentence is not frontier-reasoning work, and this runs once per unique word for the whole user base. Cheap models have quirks — this one returns the right fields nested under a key it invented on about half of calls — so the call carries a `repairText` unwrap, asserted in `db:smoke` against captured payloads. `AI_GATEWAY_API_KEY` is server-only (the Expo app never talks to a provider) and **optional** — without it, lookups resolve and cache base definitions exactly as before, they simply never gain a sentence. Every failure mode returns the base row, because enrichment is only ever an upgrade on a definition the reader already has; it must not be able to turn a working lookup into a broken screen.
+That is what makes the spec's cost target — at most one AI call per unique word for the whole user base — true in real traffic, not only on paper. A failed call releases the claim, so a timeout costs the word nothing worse than staying plain until its next lookup.
 
-The prompt requires a neutral invented sentence and forbids referencing a plot, character, or setting. A sentence borrowed from the book a reader is halfway through is a spoiler.
+The provider sits behind one function, `enrichDefinition` (`packages/api/src/enrich.ts`), calling the model through [Vercel AI Gateway](/docs/ai-enrichment#changing-the-model) with `generateObject` and a Zod schema.
 
-**Three columns got their writers.** `word.personalNote` (an annotation *alongside* the definition, not replacing it) and `word.lastReviewedAt` (stamped by `word.update({ reviewed: true })`, so a flashcard turn has somewhere to sync) were both schema-only. Each field of `word.update` is written only when sent, so a review turn cannot blank a note typed on the same row, and the timestamps are the server's — a device with a wrong clock cannot backdate a review.
+The model is one `provider/model` string (`zai/glm-4.7-flashx`, about $0.06 / $0.40 per million tokens). So changing the model **or the vendor** is that line: no second SDK, no second account, no second key, and never the tRPC contract.
 
-**Account deletion.** `deleteUser` is enabled in Better Auth, gated on the caller's password or a session fresher than a day. Every domain table references `user.id` with `ON DELETE CASCADE`, so the row takes the folders, words and preferences with it — and those captures leave the crowdsourced counts too, which is the right reading of "delete my data". Changing an *email* stays unbuilt for a concrete reason: Better Auth requires a verification mail, and this app has no email sender.
+A small, fast model on purpose: an example sentence is not frontier reasoning work, and this runs once per unique word for every reader.
+
+Cheap models have quirks. This one returns the right fields nested under a key it invented, on about half of calls. So the call carries a `repairText` unwrap, asserted in `db:smoke` against captured payloads.
+
+`AI_GATEWAY_API_KEY` is server-only (the Expo app never talks to a provider) and **optional**. Without it, lookups resolve and cache base definitions exactly as before; words simply never gain a sentence.
+
+Every failure mode returns the base row. Enrichment is only ever an upgrade on a definition the reader already has, so it must not be able to turn a working lookup into a broken screen.
+
+The prompt requires a neutral invented sentence, and forbids any mention of a plot, character or setting. A sentence borrowed from the book a reader is halfway through is a spoiler.
+
+**Three columns got their writers.** `word.personalNote` (a note **alongside** the definition, not replacing it) and `word.lastReviewedAt` (stamped by `word.update({ reviewed: true })`) were both schema-only.
+
+Each field of `word.update` is written only when sent, so a review turn cannot blank a note typed on the same row. The timestamps are the server's, so a device with a wrong clock cannot backdate a review.
+
+**Account deletion.** `deleteUser` is enabled in Better Auth, gated on the caller's password or a session fresher than one day.
+
+Every domain table references `user.id` with `ON DELETE CASCADE`, so removing the row takes the folders, words and preferences with it. Those captures also leave the crowdsourced counts, which is the right reading of "delete my data".
+
+Changing an **email** stays unbuilt for a concrete reason: Better Auth requires a verification mail, and this app has no email sender.
 
 <Callout type="warn">
-**Breaking:** `folder.updateStatus` is now `folder.update`, taking an optional `title` alongside the optional `status`. The status chips call it exactly as before; the rename is the new half. A folder's `title` is its own label, denormalized from `book.title` at creation and free to diverge after — renaming never touches the shared `book` row other readers of that book join to. There is still no way to change a folder's `bookId`, for the reason recorded in the [data model](/docs/data-model): `word.bookId` is snapshotted at capture time.
+**Breaking:** `folder.updateStatus` is now `folder.update`. It takes an optional `title` alongside the optional `status`. The status chips call it exactly as before; the rename is the new half.
+
+A folder's `title` is its own label, copied from `book.title` at creation and free to differ afterwards. So renaming never touches the shared `book` row that other readers of that book join to.
+
+There is still no way to change a folder's `bookId`, for the reason recorded in the [data model](/docs/data-model): `word.bookId` is snapshotted at capture time.
 </Callout>
 
 **Removed: `privateData`.** A scaffold procedure that returned the session user to prove auth worked. `db:smoke` proves it now, from both sides of the ownership boundary.
 
 ### Shared domain package, one definition resolver, one ownership rule
 
-An architecture review turned up the same logic written in several places, each copy free to drift from the others. All of it now has a single home.
+An architecture review found the same logic written in several places, with each copy free to drift from the others. All of it now has a single home.
 
-**`@better-vocab/domain` — a new dependency-free package.** It exists because `apps/native` cannot import `packages/db`: that would pull Postgres drivers into the React Native bundle. Anything the server and the app must agree on lives here instead of being retyped on both sides. `packages/db` builds its `pgEnum`s from these arrays, `packages/api` builds its `z.enum`s from them, and the Expo app reads them directly.
+**`@better-vocab/domain` — a new package with no dependencies.**
 
-- **`normalizeTerm`** — the match key. Every join between a captured word and a definition matches on this: the shared `dictionary_entry` table, the on-device `dictionary` table, and the crowdsourced aggregate's `GROUP BY`. It had been written out as `term.trim().toLowerCase()` at four call sites across three packages, with the rule itself recorded only in a schema comment.
+It exists because `apps/native` cannot import `packages/db`; that would pull Postgres drivers into the React Native bundle. So anything the server and the app must agree on lives here instead of being retyped on both sides.
 
-  One of those four was `scripts/build-dictionary-db.ts`, which stamps the bundled dictionary at build time. Had it ever normalized differently from the runtime lookups, every offline lookup would have missed — with no error, no crash, and nothing in the repo that would have caught it. That is the reason this is a module rather than a convention.
+`packages/db` builds its `pgEnum`s from these arrays, `packages/api` builds its `z.enum`s from them, and the Expo app reads them directly.
+
+- **`normalizeTerm`** — the match key. Every join between a saved word and a definition matches on this: the shared `dictionary_entry` table, the on-device `dictionary` table, and the crowdsourced query's `GROUP BY`.
+
+  It had been written out as `term.trim().toLowerCase()` at four call sites across three packages, with the rule recorded only in a schema comment.
+
+  One of those four was `scripts/build-dictionary-db.ts`, which stamps the bundled dictionary at build time. If it had ever normalized differently from the runtime lookups, **every offline lookup would have missed** — with no error, no crash, and nothing in the repo that would have caught it. That is why this is a module and not a convention.
 
 - **Closed value sets** — `FOLDER_STATUSES`, `CAPTURE_METHODS`, `DICTIONARY_TIERS`, `OFFLINE_DICTIONARY_TIERS`, `DICTIONARY_SOURCES`. `folder_status` alone had been declared three times: a `pgEnum`, a `z.enum`, and an `as const` array in the app.
 
-- **`PREFERENCE_DEFAULTS`** — applied by `packages/db` as the column defaults *and* returned by `preference.get` for a user with no row, so "the default" is one value rather than one per reader of it.
+- **`PREFERENCE_DEFAULTS`** — used by `packages/db` as the column defaults **and** returned by `preference.get` for a user with no row. So "the default" is one value, not one per reader of it.
 
-`dictionary_source` and `DICTIONARY_TIERS` were deliberately **not** merged, despite `bundled` and `core` looking like duplicates. They sit on different axes: one is the provenance of a shared server row, the other is which on-device tier holds a copy. The same row can be `bundled` provenance and `cached` tier on the same phone.
+`dictionary_source` and `DICTIONARY_TIERS` were deliberately **not** merged, even though `bundled` and `core` look like duplicates. They are different axes: one is where a shared server row came from, the other is which on-device tier holds a copy. The same row can be `bundled` provenance and `cached` tier on the same phone.
 
-**One definition resolver.** `useDefinition` (`apps/native/hooks/use-definition.ts`) is now the only answer to "get me a definition for this term" — device tiers first, `dictionary.lookup` second, result written back to the `cached` tier. Three separate decisions used to answer that question: the SQL that ranked the on-device tiers, the Add Word screen that chose between device and server, and the server procedure that chose between its cache and Datamuse.
+**One definition resolver.** `useDefinition` (`apps/native/hooks/use-definition.ts`) is now the only answer to "get me a definition for this term": device tiers first, `dictionary.lookup` second, and the result written back to the `cached` tier.
 
-It returns a `found` / `missing` / `unreachable` union, so a screen renders a state instead of merging two query results by hand. `apps/native/lib/dictionary.ts` owns the reads and writes; screens no longer touch SQL.
+Three separate decisions used to answer that question: the SQL that ranked the on-device tiers, the Add Word screen choosing between device and server, and the server procedure choosing between its cache and Datamuse.
 
-**Fixed: nothing wrote the `cached` tier.** The lookup query ranked `cached` highest, but no code ever inserted a row with that source — an online result was displayed and thrown away. `cacheDefinition` now writes it back, so the second lookup of a word works on a plane. The tier's top priority had been unreachable since it was introduced.
+It returns a `found` / `missing` / `unreachable` union, so a screen renders a state instead of merging two query results by hand. `apps/native/lib/dictionary.ts` owns the reads and writes; screens no longer write SQL.
 
-**One ownership rule.** `ownedBy` + `assertOwned` (`packages/api/src/ownership.ts`) replace six hand-written `(id, userId)` predicates in three shapes.
+**Fixed: nothing wrote the `cached` tier.** The lookup query ranked `cached` highest, but no code ever inserted a row with that source. An online result was shown and then thrown away. `cacheDefinition` now writes it back, so the second lookup of a word works on a plane. The tier's top priority had been unreachable since it was introduced.
+
+**One ownership rule.** `ownedBy` and `assertOwned` (`packages/api/src/ownership.ts`) replace six hand-written `(id, userId)` predicates written in three different shapes.
 
 <Callout type="warn">
-**Breaking:** `word.delete` and `folder.delete` used to return `{ id }` whether or not a row matched, so deleting a word that belonged to someone else — or one already deleted — reported success. Both now throw `NOT_FOUND`, matching what `update` always did. Deleting the same row twice is no longer a silent no-op.
+**Breaking:** `word.delete` and `folder.delete` used to return `{ id }` whether or not a row matched. So deleting a word that belonged to someone else — or one already deleted — reported success.
+
+Both now throw `NOT_FOUND`, which is what `update` always did. Deleting the same row twice is no longer a silent no-op.
 </Callout>
 
-Both failures are `NOT_FOUND` rather than `FORBIDDEN`, deliberately: a caller has no business learning that a row exists but belongs to someone else.
+Both failures are `NOT_FOUND` rather than `FORBIDDEN`, deliberately. A caller has no business learning that a row exists but belongs to someone else.
 
-**One Postgres connection pool.** `createAuth()` called `createDb()` a second time, so every server process held two pools that shared nothing — one for tRPC, one for Better Auth's adapter. It now takes the connection as a parameter, which also makes the adapter injectable for tests.
+**One Postgres connection pool.** `createAuth()` called `createDb()` a second time, so every server process held two pools that shared nothing: one for tRPC, one for Better Auth's adapter. It now takes the connection as a parameter, which also makes the adapter injectable for tests.
 
 ### `preference` router
 
-`user_preference` had a schema and a reader but no writer: `word.create` consulted `contributeToAggregateByDefault` to decide whether a capture joins the crowdsourced aggregate, and nothing let a reader change it. The opt-out the [privacy model](/docs/data-model) promises existed only as a column.
+`user_preference` had a schema and a reader, but no writer. `word.create` read `contributeToAggregateByDefault` to decide whether a capture joins the crowdsourced query, and nothing let a reader change it. The opt-out the [privacy model](/docs/data-model) promises existed only as a column.
 
 - `preference.get` — never writes. A user with no row gets `PREFERENCE_DEFAULTS`, so a settings screen can open without a write on first launch.
-- `preference.update` — upserts field by field, so a toggle sends only what it changed rather than echoing back the rest of the screen. `updatedAt` is always in the `SET` clause, which keeps the timestamp honest on the conflict path (`$onUpdate` only fires for a plain `UPDATE`) and means the clause is never empty.
-
-No settings screen calls these yet.
+- `preference.update` — upserts field by field, so a toggle sends only what it changed instead of echoing the whole screen back. `updatedAt` is always in the `SET` clause, which keeps the timestamp correct on the conflict path (`$onUpdate` only fires for a plain `UPDATE`) and means the clause is never empty.
 
 ### `word.createMany` — the offline flush endpoint
 
-`pending_sync` has been in the on-device schema since the first migration with nothing on either end of it. The server half now exists.
+`pending_sync` had been in the on-device schema since the first migration, with nothing on either end of it. The server half now exists.
 
-`createMany` takes up to 100 queued captures and returns a result **per capture**, not one verdict for the batch:
+`createMany` takes up to 100 queued captures and returns a result **per capture**, not one result for the batch:
 
 | Status | Meaning | What the device does |
 | --- | --- | --- |
-| `saved` | Written, or already present | Delete the queued row |
-| `dropped` | Permanently un-writable — e.g. the folder was deleted on another device | Delete it too; retrying will never succeed |
-| *(thrown error)* | Transient — lost connection, database fault | Keep the queue, try again later |
+| `saved` | Written, or already there | Delete the queued row |
+| `dropped` | Can never be written — for example, the folder was deleted on another device | Delete it too. Retrying will never work |
+| *(thrown error)* | Temporary — lost connection, database fault | Keep the queue and try again later |
 
-Partial success is the point: a folder deleted on another device must not strand every other queued word behind it. Ownership is resolved per folder and the preference read once, both outside the loop.
+Partial success is the point. A folder deleted on another device must not block every other queued word.
 
-`create` and `createMany` share one private `captureWord`, so the rule that a client never writes `dictionary_entry` cannot hold for the live save and quietly lapse for the flush.
+Folder ownership is resolved per folder, and the preference is read once. Both happen outside the loop.
 
-The device half still does not exist — nothing writes a `pending_sync` row when a capture happens offline, and nothing calls `createMany` on reconnect.
+`create` and `createMany` share one private `captureWord`. So the rule that a client never writes `dictionary_entry` cannot hold for the live save and quietly lapse for the flush.
 
 ### Checks
 
-`db:smoke` grew from 19 assertions to 28. The new ones cover `normalizeTerm` directly, the delete-ownership fix, the preference round trip (including that the opt-out actually reaches a capture rather than merely persisting), and the flush — including that resending a queue after a crash is idempotent.
+`db:smoke` grew from 19 assertions to 28. The new ones cover `normalizeTerm` directly, the delete-ownership fix, the preference round trip (including that the opt-out really reaches a capture, not just that it persists), and the flush — including that resending a queue after a crash is idempotent.
 
-One new check reads the live `pg_enum` labels back out of Postgres and compares them to the domain arrays. Asserting the `pgEnum`s match the arrays would prove nothing, since they are built from them; asking the database catches the case that actually bites, which is a value added without a generated migration.
+One new check reads the live `pg_enum` labels back out of Postgres and compares them to the domain arrays.
+
+Asserting that the `pgEnum`s match the arrays would prove nothing, because they are built from them. Asking the database catches the case that actually bites: a value added to an array without a generated migration.
 
 ## 2026-09-07 — Book search and dictionary lookup
 
-`book.search` proxies [Hardcover](/docs/book-search)'s GraphQL API so the token never leaves the server, and folder creation links the picked result. `dictionary.lookup` resolves definitions through Datamuse and caches them in `dictionary_entry` ([API layer](/docs/api-layer#the-dictionary-router)).
+`book.search` proxies [Hardcover](/docs/book-search)'s GraphQL API, so the token never leaves the server, and folder creation links the picked result.
 
-Schema with no producer was deleted rather than kept warm: `book_word_aggregate`, `push_token`, `book.raw`, `book.topics`, `dictionary_entry.audio_url`, `word.example_sentence`, and the FTS5 index in the dictionary build. The bet is that adding a column alongside the feature that reads it is cheaper than maintaining schema for a feature that may never arrive.
+`dictionary.lookup` resolves definitions through Datamuse and caches them in `dictionary_entry` ([API layer](/docs/api-layer#the-dictionary-router)).
+
+Schema with no producer was deleted rather than kept warm: `book_word_aggregate`, `push_token`, `book.raw`, `book.topics`, `dictionary_entry.audio_url`, `word.example_sentence`, and the FTS5 index in the dictionary build.
+
+The bet: adding a column together with the feature that reads it is cheaper than maintaining schema for a feature that may never arrive.
 
 ## 2026-09-03 — First vertical slice
 
-Shelf, folder detail, and word capture, walkable end to end: sign in, see your shelf, create a folder, log a word into it, browse and search. Kindle-style reading themes and a serif reading font landed alongside it.
+Shelf, folder detail and word capture, walkable end to end: sign in, see your shelf, create a folder, save a word into it, browse and search.
+
+Kindle-style reading themes and a serif reading font landed alongside it.

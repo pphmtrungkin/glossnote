@@ -3,60 +3,103 @@ title: Authentication
 description: Better Auth configuration and how a session reaches a tRPC procedure
 ---
 
-Auth is handled by [Better Auth](https://better-auth.com), configured in exactly one place — `packages/auth/src/index.ts` — and imported everywhere it's needed rather than reimplemented per app. That's worth calling out because it's a common trap: it would be easy to end up with slightly different session-handling logic in `apps/server` versus `apps/native`. Instead, there is a single `auth` object, and every other piece of the codebase treats it as a black box.
+Authentication uses [Better Auth](https://better-auth.com). It is configured in exactly one file: `packages/auth/src/index.ts`. Every app imports that one object.
 
-## What's actually configured
+This matters. It would be easy to end up with slightly different session logic in `apps/server` and in `apps/native`. Instead there is a single `auth` object, and the rest of the codebase treats it as a black box.
+
+## What is configured
 
 ```ts
-// packages/auth/src/index.ts (shape, not verbatim)
+// packages/auth/src/index.ts (shape, not the exact file)
 betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
   trustedOrigins: [env.CORS_ORIGIN, "glossnote://", "exp://", "http://localhost:8081"],
   emailAndPassword: { enabled: true },
   user: { deleteUser: { enabled: true } },
+  rateLimit: { enabled: true, window: 60, max: 100, customRules: { "/delete-user": { window: 3600, max: 5 } } },
   plugins: [expo()],
 });
 ```
 
-- **`drizzleAdapter`** points Better Auth at our own Postgres database and our own `user`/`session`/`account`/`verification` tables (`packages/db/src/schema/auth.ts`) instead of managing its own separate database. Better Auth generates the *shape* of those tables, but they live in our schema, migrate alongside everything else, and are queryable with the same Drizzle client as every other table.
-- **`emailAndPassword: { enabled: true }`** is the only sign-in method currently wired up. The product flow doc mentions magic link and OAuth as options — neither is configured yet. If you go looking for them and don't find them, that's not a bug, it's just not built.
-- **`expo()` plugin** is what makes auth work on a mobile app instead of a browser at all. A normal web session relies on the browser automatically attaching cookies to every request; a React Native app has no such thing. This plugin adds the deep-link handshake and secure-storage-backed session handling that Expo needs.
-- **`user.deleteUser`** is off by default in Better Auth; turning it on is what gives a settings screen something to call. See [Deleting an account](#deleting-an-account) below for what it takes with it.
-- **`trustedOrigins`** includes the app's custom URL scheme (`glossnote://`) and Expo's dev scheme (`exp://`) — without these, Better Auth would reject the redirect that completes login on a device.
+- **`drizzleAdapter`** points Better Auth at our own Postgres database and our own `user` / `session` / `account` / `verification` tables (`packages/db/src/schema/auth.ts`). Better Auth defines the **shape** of those tables, but they live in our schema, they migrate with everything else, and we can query them with the same Drizzle client as any other table.
+- **`emailAndPassword: { enabled: true }`** is the only sign-in method that is wired up. The product doc mentions magic link and OAuth as options. Neither is configured. If you go looking for them and cannot find them, that is not a bug.
+- **The `expo()` plugin** is what makes auth work in a mobile app instead of a browser. A web session works because the browser attaches cookies to every request automatically. A React Native app has nothing like that. This plugin adds the deep-link handshake and the secure-storage session handling that Expo needs.
+- **`user.deleteUser`** is off by default in Better Auth. Turning it on gives the settings screen something to call. See [Deleting an account](#deleting-an-account).
+- **`trustedOrigins`** includes the app's own URL scheme (`glossnote://`) and Expo's dev scheme (`exp://`). Without these, Better Auth would reject the redirect that finishes login on a device.
+- **`rateLimit`** is explained in the next section.
 
-## How a session actually reaches your code
+## Rate limiting
 
-This is the part worth understanding end to end, because it explains why `protectedProcedure` can just assume `ctx.session` exists.
+Better Auth has a built-in rate limiter. We enable it explicitly, and this is worth understanding.
 
-1. A request comes into `apps/server`, hits `/trpc/*`, and gets routed into `packages/api` before any procedure runs.
-2. `packages/api/src/context.ts` builds the per-request context by calling `auth.api.getSession({ headers })` — reading whatever cookie or token came in on the request and asking Better Auth "who is this, if anyone?"
-3. That result (a session or `null`) is placed on `ctx.session` for every procedure to see.
-4. `protectedProcedure` (`packages/api/src/index.ts`) is a `publicProcedure` wrapped in one piece of middleware: if `ctx.session` is missing, throw `UNAUTHORIZED` before the procedure body ever runs. If it's present, `next()` is called with a *narrowed* context where `ctx.session` is no longer nullable — which is why procedure code like `word.create` can write `ctx.session.user.id` directly without an `if (!ctx.session)` check of its own. The check already happened one layer up, and TypeScript knows it.
+By default, Better Auth turns the limiter on only in production. It decides that by reading `NODE_ENV`. But our own env schema (`packages/env/src/server.ts`) defaults `NODE_ENV` to `"development"`. So a deployment that forgets to set `NODE_ENV=production` would run **with no rate limiting at all**, and nothing would warn you.
 
-So the mental model is: authentication is resolved once, centrally, before your procedure code exists at all. You never call `auth.api.getSession()` yourself inside a procedure — you just declare whether the procedure needs a session (`protectedProcedure`) or not (`publicProcedure`), and the context/middleware pipeline handles the rest.
+So we set `enabled: true` unconditionally. The cost in development is small: if you hammer sign-in from a test script, you get throttled. That is the behaviour we want to be able to see.
+
+Version 1.7.1 already ships stricter built-in rules for some paths:
+
+| Paths | Limit |
+| --- | --- |
+| `/sign-in*`, `/sign-up*`, `/change-password*`, `/change-email*` | 3 per 10 seconds |
+| `/request-password-reset`, `/send-verification-email`, `/forget-password*` | 3 per 60 seconds |
+| everything else | our floor: 100 per 60 seconds |
+| `/delete-user` | our custom rule: 5 per hour |
+
+We add the `/delete-user` rule because the built-in list does not cover it, and deleting an account cascades every folder, word and preference the user has.
+
+<Callout type="info">
+The counters are stored in memory. So they are per server process, and they reset when you deploy. For one instance that is fine.
+
+If this ever runs on more than one instance, switch to `storage: "database"`. That needs a generated migration for Better Auth's own `rateLimit` table.
+
+tRPC procedures are limited separately; see [API layer](/docs/api-layer#both-proxies-have-a-request-budget).
+</Callout>
+
+## How a session reaches your code
+
+This is the part worth learning end to end. It explains why `protectedProcedure` can simply assume `ctx.session` exists.
+
+1. A request arrives at `apps/server` and matches `/trpc/*`. It is passed to `packages/api` before any procedure runs.
+2. `packages/api/src/context.ts` builds the per-request context. It calls `auth.api.getSession({ headers })`, which reads whatever cookie or token arrived and asks Better Auth: "who is this, if anyone?"
+3. The answer — a session, or `null` — is put on `ctx.session`, where every procedure can see it.
+4. `protectedProcedure` (`packages/api/src/index.ts`) is a `publicProcedure` plus one piece of middleware. If `ctx.session` is missing, it throws `UNAUTHORIZED` before the procedure body runs. If it is present, it calls `next()` with a **narrowed** context, where `ctx.session` is no longer nullable.
+
+Step 4 is why code like `word.create` can write `ctx.session.user.id` directly, with no `if (!ctx.session)` check of its own. The check already happened one layer above, and TypeScript knows it.
+
+The mental model: authentication is resolved once, in one place, before your procedure code exists. Never call `auth.api.getSession()` yourself inside a procedure. Just declare what the procedure needs — `protectedProcedure` or `publicProcedure` — and let the pipeline do the rest.
 
 ## The client side
 
-`apps/native/lib/auth-client.ts` is the mirror image on the mobile app: `createAuthClient` from `better-auth/react`, configured with the matching `expoClient()` plugin, using `expo-secure-store` to hold the session token on-device.
+`apps/native/lib/auth-client.ts` is the mirror image in the app. It uses `createAuthClient` from `better-auth/react` with the matching `expoClient()` plugin, and stores the session token with `expo-secure-store`.
 
-One detail that trips people up: a mobile `fetch` call doesn't automatically send cookies the way a browser tab does. So the tRPC client (`apps/native/utils/trpc.ts`) explicitly reads the current session cookie via `authClient.getCookie()` and attaches it as a `Cookie` header on every request — on web, it instead just sets `credentials: "include"` and lets the browser handle it. Same backend, two different plumbing strategies, because "web" and "native" don't share a network stack the way you might assume.
+One detail surprises people. A `fetch` call in a mobile app does **not** send cookies automatically, the way a browser tab does.
+
+So the tRPC client (`apps/native/utils/trpc.ts`) reads the current session cookie with `authClient.getCookie()` and attaches it as a `Cookie` header on every request. On web it does something different: it sets `credentials: "include"` and lets the browser handle it.
+
+Same backend, two different approaches, because web and native do not share a network stack.
 
 ## Deleting an account
 
-The user flow requires it ("manage account — email, password, delete account"), and it is now enabled. Better Auth will only honour the request if the caller proves who they are one of two ways:
+The user flow requires this ("manage account — email, password, delete account"), and it is enabled.
+
+Better Auth only accepts the request if the caller proves who they are, in one of two ways:
 
 | Gate | When it applies |
 | --- | --- |
-| The current password | `authClient.deleteUser({ password })` — the normal path for an email/password account |
-| A **fresh** session | `authClient.deleteUser()` with no password, if they signed in within `session.freshAge` (1 day by default) |
+| The current password | `authClient.deleteUser({ password })` — the normal path for an email and password account |
+| A **fresh** session | `authClient.deleteUser()` with no password, if the user signed in within `session.freshAge` (1 day by default) |
 
-There is deliberately no `sendDeleteAccountVerification` callback: that third path needs an email sender, and this app has none. It's the path OAuth users would need — worth remembering if a social provider is ever configured, since those accounts have no password to check.
+There is deliberately no `sendDeleteAccountVerification` callback. That third path needs an email sender, and this app has none. It is the path OAuth users would need, so remember it if a social provider is ever added — those accounts have no password to check.
 
-What deletion actually removes is decided by the schema, not by a cleanup routine. Every domain table references `user.id` with `ON DELETE CASCADE`, so removing the row takes that reader's folders, words and preferences with it — and because the crowdsourced aggregate is a live `COUNT(DISTINCT user_id)` over `word` rather than a stored counter, their contributions leave the shared counts at the same moment. Nothing to decrement, nothing left pointing at a user who no longer exists. That's a deliberate benefit of [not materializing the aggregate](/docs/data-model#worked-example-logging-a-word).
+What deletion removes is decided by the schema, not by cleanup code. Every domain table references `user.id` with `ON DELETE CASCADE`. So removing the user row also removes that reader's folders, words and preferences.
 
-## What's not built yet
+The crowdsourced count is a live `COUNT(DISTINCT user_id)` over `word`, not a stored counter. So their contribution leaves the shared counts at the same moment. There is nothing to decrement, and no row left pointing at a user who no longer exists.
 
-- Magic link sign-in
-- OAuth (Google/Apple/etc.)
-- **Changing an email.** Better Auth's `changeEmail` sends a verification mail to the new address and won't complete without it — same blocker as delete-account verification. Changing a *password* already works (`authClient.changePassword`), it just has no screen.
-- No account screen calls any of this yet; see [Implementation status](/docs/implementation-status).
+That is a real benefit of [not storing the aggregate](/docs/data-model#example-saving-one-word).
+
+## What is not built yet
+
+- Magic link sign-in.
+- OAuth (Google, Apple, and so on).
+- **Changing an email.** Better Auth's `changeEmail` sends a verification mail to the new address and cannot finish without it. That is the same blocker as delete-account verification. Changing a **password** already works (`authClient.changePassword`), but it has no screen.
+- **Delete account has no screen.** `apps/native/app/settings.tsx` calls `authClient.signOut()` only. See [Implementation status](/docs/implementation-status).

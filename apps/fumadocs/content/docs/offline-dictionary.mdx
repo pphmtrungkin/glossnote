@@ -3,57 +3,112 @@ title: Offline dictionary
 description: The on-device SQLite dictionary and the WordNet build pipeline
 ---
 
-## Why an on-device database at all
+## Why we need a database on the phone
 
-The core design principle for this app is: **offline mode should never feel broken.** If someone is reading on a plane and looks up a word, they shouldn't see a spinner that never resolves — they should get a real definition instantly, then a richer one later once they're back online. That requirement rules out "just call an API and show a loading state" as the primary path; the primary path has to be a database that already lives on the phone.
+The main design rule of this app is: **offline mode must never feel broken.**
 
-That's `expo-sqlite` — a real SQLite database bundled with (or downloaded by) the app, queried entirely on-device, no network required. It's a *separate* concept from the Postgres `dictionaryEntry` cache described in [Data model](/docs/data-model): the server-side cache is a shared, cross-user, online resource; the on-device database is a private, offline-first resource that exists purely so the app has something to answer with when there's no connection at all.
+Someone reading on a plane looks up a word. They should not see a spinner that never finishes. They should get a real definition at once, and a better one later when they are online again.
+
+That rules out "call an API and show a loading state" as the main path. The main path has to be a database that is already on the phone.
+
+That database is `expo-sqlite`: a real SQLite file, shipped with the app or downloaded by it, queried on the phone with no network.
+
+It is **not** the same thing as the Postgres `dictionaryEntry` cache in [Data model](/docs/data-model):
+
+| | `dictionaryEntry` (Postgres) | `dictionary` (phone SQLite) |
+| --- | --- | --- |
+| Where | Server | The device |
+| Who sees it | Shared by all users | Private to one device |
+| Needs a network | Yes | No |
+| Why it exists | Avoid paying twice for the same word | Have an answer with no connection |
 
 ## The local tables
 
-Defined in `apps/native/lib/local-db.ts`, created via a migration that runs through `SQLiteProvider`'s `onInit` callback (wired up in `apps/native/app/_layout.tsx`) every time the app starts. The current schema version is `user_version` 3.
+They are defined in `apps/native/lib/local-db.ts`. A migration creates them through `SQLiteProvider`'s `onInit` callback, which is wired up in `apps/native/app/_layout.tsx` and runs at every app start. The current schema version is `user_version` 3.
 
-`onInit` runs two steps in a load-bearing order: `migrateLocalDb` creates the schema, then `installBundledCore` merges the bundled dictionary into the `dictionary` table it just created. Both are no-ops after the first launch.
+`onInit` runs two steps, and the order matters:
+
+1. `migrateLocalDb` creates the schema.
+2. `installBundledCore` merges the bundled dictionary into the `dictionary` table it just created.
+
+Both do nothing after the first launch.
 
 | Table | Purpose |
 | --- | --- |
-| `dictionary` | Every definition available on-device, in all three tiers — distinguished by a `source` column |
-| `pending_sync` | Words captured offline, waiting to flush to the server once reconnected |
-| `app_setting` | Device-local UI preferences (the reading theme), applied on the first frame before any session exists |
+| `dictionary` | Every definition available on the device, in all three tiers, told apart by a `source` column |
+| `pending_sync` | Words saved while offline, waiting to be sent to the server |
+| `app_setting` | Device-local UI settings (the reading theme), applied on the first frame before any session exists |
 
-### One dictionary table, three tiers
+### One table, three tiers
 
-`dictionary` started life as three separate tables — `dictionary_core`, `dictionary_extended`, and `cached_lookup` — queried as a three-hop fallthrough. They held identical columns, so they were collapsed in the `user_version` 3 migration into one table plus a `source` column:
+`dictionary` used to be three tables: `dictionary_core`, `dictionary_extended` and `cached_lookup`. A lookup tried each one in turn.
+
+They had identical columns, so the `user_version` 3 migration merged them into one table with a `source` column:
 
 | `source` | Meaning |
 | --- | --- |
-| `core` | The bundled reference dictionary, pre-populated at build time (see below). One row per term. |
-| `extended` | The downloadable pack, opt-in from Settings. A term can have *multiple* rows — one per WordNet sense — ordered by `rank`. |
-| `cached` | Definitions resolved online (dictionary API / AI-enhanced), kept so the same word works offline on every later lookup. |
+| `core` | The bundled dictionary, built at release time (see below). One row per term |
+| `extended` | The optional download, turned on from Settings. A term can have **several** rows, one per WordNet sense, ordered by `rank` |
+| `cached` | Definitions resolved online, kept so the same word works offline next time |
 
-Three payoffs. Lookup is a single indexed `SELECT` instead of three sequential queries. Dropping the extended pack becomes a `DELETE WHERE source = 'extended'` rather than a `DROP TABLE`. And `dictionary_term_source_rank_uidx`, unique on `(term, source, rank)`, both backs the lookup and makes re-merging a downloaded pack idempotent.
+Three benefits came from merging them:
 
-That last table is worth pausing on: `pending_sync` only exists on the device, never on the server. There's no equivalent "sync queue" table in Postgres, and that's intentional — the server never needs to know that a queue exists at all, it only ever sees the captures once they actually arrive. Keeping sync state purely client-side avoids having to reconcile two separate ideas of "what's pending" across two databases.
+1. A lookup is one indexed `SELECT`, not three queries in a row.
+2. Removing the extended pack is `DELETE WHERE source = 'extended'`, not `DROP TABLE`.
+3. One unique index, `dictionary_term_source_rank_uidx` on `(term, source, rank)`, both speeds up the lookup and makes re-merging a downloaded pack safe.
 
-The endpoint they flush *to* now exists: `word.createMany` takes a batch and reports the outcome of each capture separately, so one dead folder can't wedge the queue ([API layer](/docs/api-layer#wordcreatemany--draining-the-offline-queue)). Nothing on the device writes to `pending_sync` or calls it yet.
+### `pending_sync` exists only on the phone
+
+There is no matching "sync queue" table in Postgres, and that is intentional. The server never needs to know a queue exists. It only sees the words when they arrive.
+
+Keeping the queue on the client means we never have to reconcile two different ideas of "what is pending" across two databases.
+
+The endpoint they are sent to is `word.createMany`. It takes a batch and reports the result of each word separately, so one deleted folder cannot block the queue. See [API layer](/docs/api-layer#wordcreatemany--sending-the-offline-queue).
+
+The device side is built too:
+
+| File | Job |
+| --- | --- |
+| `apps/native/lib/pending-sync.ts` | Writes a queue row when a save fails offline; reads the queue and sends it; deletes the rows the server accounted for |
+| `apps/native/hooks/use-capture-word.ts` | The one save path both capture screens use. It queues the word when the request never reached the server, and reports `queued` instead of an error |
+| `apps/native/hooks/use-pending-sync.ts` | Mounted once, high in the tree. It runs the flush when `expo-network` reports a connection again |
+
+One detail in `use-capture-word.ts` is worth copying if you write something similar. It queues a word only when the request **never arrived**:
+
+```ts
+// lib/pending-sync.ts
+export function isOfflineError(error: unknown) {
+  return error instanceof TRPCClientError && error.data == null;
+}
+```
+
+A tRPC error thrown by a procedure carries `data` (the error code, the HTTP status). A `fetch` that never completed carries none. Only the second kind is worth queueing. A `NOT_FOUND` would sit in the queue forever.
 
 ## One resolver
 
-`useDefinition` (`apps/native/hooks/use-definition.ts`) is what a screen calls when the user types or speaks a word — and it is the *only* thing a screen calls. Device tiers first, the server second, and the answer written back for next time, all behind one call.
+`useDefinition` (`apps/native/hooks/use-definition.ts`) is what a screen calls when the user types or says a word. It is the **only** thing a screen calls.
 
-That used to be three separate decisions: the SQL that ranked the on-device tiers, the Add Word screen that chose between device and server, and `dictionary.lookup` choosing between its cache and Datamuse. The screen was the only place that knew about both storage systems, and it reconciled their shapes by hand.
+The server when the device is online, the device tiers when it is not, and the server's answer written back for next time — all behind one call.
 
-It returns a union rather than a value, so a screen renders a state instead of inferring one:
+That used to be three separate decisions:
+
+1. the SQL that ranked the tiers on the device
+2. the Add Word screen choosing between device and server
+3. `dictionary.lookup` choosing between its cache and its providers
+
+The screen was the only place that knew about both storage systems, and it matched up their different shapes by hand.
+
+It returns a union, not a value. So a screen renders a state instead of guessing one:
 
 | Result | Meaning |
 | --- | --- |
-| `found` | A definition, plus `fromNetwork` — which is what the "Found online" / "Found in your offline dictionary" line keys off |
-| `missing` | Asked everywhere available; genuinely not a word we know |
-| `unreachable` | Not on the device, and the server couldn't be reached to ask |
+| `found` | A definition, plus `fromNetwork`. That flag is what the "Found online" / "Found in your offline dictionary" line reads |
+| `missing` | We asked everywhere available. This is genuinely not a word we know |
+| `unreachable` | Not on the device, and the server could not be reached |
 
-`missing` and `unreachable` are worth keeping apart: one means "type your own definition, this is a name or an invented word", the other means "you're offline, try again later". They look identical if you only check for the absence of a definition.
+Keep `missing` and `unreachable` apart. One means "this is a name or an invented word — save it, and write what it means in your note". The other means "you are offline, try again later". They look identical if you only check whether a definition is absent.
 
-Reads and writes live in `apps/native/lib/dictionary.ts`; no screen touches SQL.
+Reads and writes live in `apps/native/lib/dictionary.ts`. No screen writes SQL.
 
 ### Lookup order
 
@@ -67,52 +122,85 @@ SELECT definition, part_of_speech, example_sentence, source
  LIMIT 1
 ```
 
-`cached` outranks `core` deliberately. The old three-table fallthrough checked the bundled dictionary *first*, which meant a definition already resolved online — richer, possibly AI-enhanced — lost to whatever WordNet gloss shipped in the binary. Collapsing the tables made the priority a single `ORDER BY` clause, and fixed it in passing.
+`cached` beats `core` on purpose. The old three-table version checked the bundled dictionary **first**. So a definition already resolved online — richer, maybe AI-enhanced — lost to whatever WordNet text shipped in the binary.
+
+Merging the tables turned that priority into one `ORDER BY` clause, and fixed the bug along the way.
 
 <Callout type="warn">
-For a while that top priority was unreachable: nothing ever wrote a row with `source = 'cached'`. An online result was displayed and thrown away, so the same word cost another round trip every time. `cacheDefinition` now writes it back on every server-resolved hit — see the [changelog](/docs/changelog).
+For a while that top priority could never be reached: nothing ever wrote a row with `source = 'cached'`. An online result was shown and then thrown away, so the same word cost another request every time.
+
+`cacheDefinition` now writes it back on every server-resolved hit. See the [changelog](/docs/changelog).
 </Callout>
 
-Within `extended`, only the top-ranked sense (`rank` 0, the most frequent) is surfaced — matching the "definition displayed instantly, user confirms" flow. The other senses stay in the table, queryable later if a "see other meanings" screen ever gets built.
+Inside `extended`, only the top-ranked sense (`rank` 0, the most frequent) is shown. That matches the "show a definition instantly, the user confirms it" flow. The other senses stay in the table, ready for a "see other meanings" screen if one is ever built.
 
 ## Where the bundled data comes from
 
-The reference dictionary is built from [Open English WordNet](https://github.com/globalwordnet/english-wordnet) (CC-BY 4.0), a free lexical database of roughly 127,000 lemmas across 107,500 synsets. That's too large to ship wholesale as a "small" first-launch download, and WordNet's own data doesn't carry a "how common is this word in everyday English" signal — so the app draws a line using data WordNet *does* provide: sense frequency ranking.
+The dictionary is built from [Open English WordNet](https://github.com/globalwordnet/english-wordnet) (CC-BY 4.0). It is a free lexical database with about 127,000 lemmas across 107,500 synsets.
 
-**`core`** = single-word lemmas only, keeping just the #1 (most frequent) sense of each. **74,441 terms, 9.2 MB** — small enough to bundle directly in the app binary, available instantly before the app has ever touched the network.
+That is too large to ship as a "small" first download. And WordNet does not tell us how common a word is in everyday English. So we draw the line using something WordNet does provide: sense frequency order.
 
-**`extended`** = everything: every lemma including multi-word phrases, every sense, ranked. **127,311 terms across 185,129 senses, 25 MB** — downloaded separately, only if a reader opts into the larger pack from Settings.
+| Tier | Contents | Size |
+| --- | --- | --- |
+| `core` | Single-word lemmas only, keeping the #1 most frequent sense of each | **74,441 terms, 9.2 MB** — small enough to ship inside the app |
+| `extended` | Everything: every lemma including phrases, every sense, ranked | **127,311 terms, 185,129 senses, 25 MB** — downloaded only if the reader opts in |
 
-### The build-time pipeline
+### The build pipeline
 
-Two scripts, run on a developer's machine (or CI), not on-device:
+Two scripts. They run on a developer machine or in CI, never on a phone.
 
-1. **`apps/native/scripts/wordnet-to-dictionary.ts`** downloads the **JSON export attached to a tagged OEWN release** (`bun run scripts/wordnet-to-dictionary.ts <out-dir> [edition]`, default `2025`) — one 9.5 MB zip, about two seconds end to end. Inside are two file groups it cross-references: ~45 "synset" files (definitions and example sentences for a category like `noun.person` or `verb.motion`) and 27 `entries-*.json` files, the lemma index, which lists every word's senses in WordNet's own frequency order. It writes two plain JSON files: `dictionary-core.json` and `dictionary-extended.json`.
+**Step 1 — `apps/native/scripts/wordnet-to-dictionary.ts`**
 
-   <Callout type="warn">
-   Three traps, all of which this script hit for real before it produced a usable dictionary.
+```
+bun run scripts/wordnet-to-dictionary.ts <out-dir> [edition]   # edition defaults to 2025
+```
 
-   **`src/sense-orders.csv` is not the lemma index.** It looks like one — `lemma,pos,synset-ids` — but it holds ~1,300 rows of manual sense-order *corrections*. Building from it yields **963 words** instead of 75,000, and nothing errors. `entries-*.json` is the vocabulary.
+It downloads the JSON export attached to a tagged OEWN release: one 9.5 MB zip, about two seconds end to end.
 
-   **Sense rank must count across a lemma's whole entry, not per part of speech.** The device index is unique on `(term, source, rank)`, so restarting at 0 for a word's verb senses collides with its noun senses and `INSERT OR IGNORE` drops them *silently*.
+Inside are two groups of files, and the script cross-references them:
 
-   **A WordNet example is not always a string.** Attributed quotations are `{ source, text }` objects — 589 of them in the core set — which reach the SQLite driver as unbindable values.
-   </Callout>
+- about 45 "synset" files — definitions and example sentences for a category such as `noun.person` or `verb.motion`
+- 27 `entries-*.json` files — the lemma index, which lists every word's senses in WordNet's own frequency order
 
-   The source is a *pinned edition* rather than `main` deliberately: reading the repo's working branch means 72 requests and a moving target. `main` had already drifted past the 2025 release when this was built — 107,528 synsets against the release's 107,519 — which is enough for two builds of "the dictionary" to be quietly different artifacts. JSON exports start at the 2025 edition; older tags ship only XML and RDF, and the script says so rather than 404-ing obscurely.
-2. **`apps/native/scripts/build-dictionary-db.ts`** is intentionally *not* WordNet-specific — it just takes one of those JSON files plus a `core`/`extended` mode flag and produces a real SQLite `.db` file using Bun's built-in `bun:sqlite` (no extra dependency needed). Since both tiers now write the same `dictionary` table, the mode flag only decides the `source` value stamped on each row and whether `rank` is honoured or pinned to 0.
+It writes two plain JSON files: `dictionary-core.json` and `dictionary-extended.json`.
 
-   It rebuilds over its output rather than opening it: `CREATE TABLE` on an existing file fails, and a half-built `.db` left behind reads as a bug in the source data.
+<Callout type="warn">
+Three traps. This script hit all three for real before it produced a usable dictionary.
 
-   An FTS5 index used to be built alongside the `core` table, intended for "did you mean…" suggestions on a voice mishear. Nothing ever queried it, so it was dropped — it doubled the asset size for a feature that doesn't exist. Add it back with the suggestion UI that needs it.
+**1. `src/sense-orders.csv` is not the lemma index.** It looks like one, with columns `lemma,pos,synset-ids`. But it holds about 1,300 rows of manual sense-order **corrections**. Building from it gives you **963 words** instead of 75,000, and nothing raises an error. `entries-*.json` is the real vocabulary.
+
+**2. Sense rank must count across a lemma's whole entry, not per part of speech.** The device index is unique on `(term, source, rank)`. If you restart at 0 for a word's verb senses, they collide with its noun senses, and `INSERT OR IGNORE` drops them **silently**.
+
+**3. A WordNet example is not always a string.** Attributed quotations are `{ source, text }` objects — 589 of them in the core set — and they reach the SQLite driver as values it cannot bind.
+</Callout>
+
+The script reads a **pinned edition**, not `main`, and that is deliberate. Reading the working branch means 72 requests and a moving target.
+
+`main` had already drifted past the 2025 release when this was written: 107,528 synsets against the release's 107,519. That is enough for two builds of "the dictionary" to be quietly different files.
+
+JSON exports start at the 2025 edition. Older tags ship only XML and RDF, and the script says so instead of failing with a confusing 404.
+
+**Step 2 — `apps/native/scripts/build-dictionary-db.ts`**
+
+```
+bun run scripts/build-dictionary-db.ts <core|extended> <in.json> <out.db>
+```
+
+This script is deliberately **not** WordNet-specific. It takes one of those JSON files plus a mode flag, and writes a real SQLite `.db` file using Bun's built-in `bun:sqlite`. No extra dependency.
+
+Both tiers write the same `dictionary` table now, so the mode flag only decides two things: the `source` value stamped on each row, and whether `rank` is kept or set to 0.
+
+It rebuilds over its output instead of opening it. `CREATE TABLE` on an existing file fails, and a half-built `.db` left behind looks like a bug in the source data.
+
+An FTS5 full-text index used to be built next to the `core` table, for "did you mean...?" after a voice mishear. Nothing ever queried it, so it was removed: it doubled the file size for a feature that does not exist. Add it back with the screen that needs it.
 
 ## Getting the two tiers onto a device
 
-Both tiers arrive as a pre-built SQLite file, and both land the same way — `apps/native/lib/dictionary-pack.ts` is the one module that does it.
+Both tiers arrive as a pre-built SQLite file, and both are installed the same way. `apps/native/lib/dictionary-pack.ts` is the one module that does it.
 
 ### The merge
 
-SQLite copies the rows itself. No JS loop:
+SQLite copies the rows itself. There is no JavaScript loop:
 
 ```sql
 ATTACH DATABASE ? AS pack;
@@ -121,42 +209,81 @@ INSERT OR IGNORE INTO dictionary (term, definition, part_of_speech, example_sent
 DETACH DATABASE pack;
 ```
 
-`ATTACH` runs outside a transaction — SQLite refuses it inside one — while the `INSERT` is a single statement, so its implicit transaction covers every row: the merge lands whole or not at all. `INSERT OR IGNORE` against `dictionary_term_source_rank_uidx` is what makes a re-run idempotent rather than a duplicate-key failure. The tier is a bound parameter written *here* rather than read out of the file, so a pack built with the wrong mode can't file itself under another tier. Measured on the real files: **74,441 core rows in 86 ms, 184,356 extended rows in 272 ms.**
+Four things to notice:
+
+- `ATTACH` runs **outside** a transaction. SQLite refuses it inside one.
+- The `INSERT` is a single statement, so its automatic transaction covers every row. The merge lands completely or not at all.
+- `INSERT OR IGNORE` works against `dictionary_term_source_rank_uidx`. That is what makes a second run safe instead of a duplicate-key error.
+- The tier is a bound parameter written **here**, not read from the file. So a pack built with the wrong mode cannot file itself under another tier.
+
+Measured on the real files: **74,441 core rows in 86 ms, 184,356 extended rows in 272 ms.**
 
 <Callout type="info">
-A column list, not `SELECT *`. A future column added to the local table would otherwise shift the pack's values silently into the wrong ones.
+Note the explicit column list, not `SELECT *`. If someone adds a column to the local table later, `SELECT *` would silently shift the pack's values into the wrong columns.
 </Callout>
 
 ### `core` — bundled, merged on first launch
 
-`assets/dictionary/core.db` ships inside the binary (`db` is registered in `metro.config.js`'s `assetExts`, or Metro treats it as source). `installBundledCore` merges it from `SQLiteProvider`'s `onInit`, after the schema migration and guarded by an `app_setting` flag so a 75k-row copy doesn't run on every launch. Failures are swallowed — an app that can't open its own asset should still start, and the online tier still resolves.
+`assets/dictionary/core.db` ships inside the app binary. (`db` is registered in `metro.config.js` under `assetExts`, or Metro would treat it as source code.)
+
+`installBundledCore` merges it from `SQLiteProvider`'s `onInit`, after the schema migration. An `app_setting` flag guards it, so a 75,000-row copy does not run at every launch.
+
+Failures are swallowed on purpose. An app that cannot open its own asset should still start, and the online tier still works.
 
 <Callout type="warn">
-It is deliberately **not** handed to `SQLiteProvider` as `assetSource`, which was the original plan and is a trap. The asset carries only the `dictionary` table, but the build script stamps `PRAGMA user_version = 3` on it — so `migrateLocalDb` returns early and never creates `pending_sync` or `app_setting`. A device that opened the asset directly would throw on the first theme save. Merging costs one copy of the rows and keeps `local-db.ts` the only owner of the schema; it also works on upgrade, where `assetSource` does nothing because the database already exists.
+The asset is deliberately **not** passed to `SQLiteProvider` as `assetSource`. That was the original plan, and it is a trap.
+
+The asset contains only the `dictionary` table. But the build script stamps `PRAGMA user_version = 3` on it. So `migrateLocalDb` would return early and never create `pending_sync` or `app_setting`. A device that opened the asset directly would crash on the first theme save.
+
+Merging costs one copy of the rows and keeps `local-db.ts` the only owner of the schema. It also works on an app upgrade, where `assetSource` does nothing because the database already exists.
 </Callout>
 
-### `extended` — downloaded, then permanent
+### `extended` — downloaded once, then permanent
 
 The download needs a connection. Nothing after it does.
 
-`EXPO_PUBLIC_DICTIONARY_PACK_URL` points at the pack as a **plain static file** — a GitHub release asset, R2, any static host. Deliberately not served by `apps/server`: tRPC is the wrong transport for a 25 MB binary, and a static host keeps the download working when the API is down. It's optional, and Settings says the pack is unavailable rather than offering a dead button when it's unset.
+`EXPO_PUBLIC_DICTIONARY_PACK_URL` points at the pack as a **plain static file**: a GitHub release asset, R2, any static host.
 
-`installPack` fetches it with `expo-file-system`'s `File.createDownloadTask` (progress, pause and resume come with the task), merges it, and deletes the downloaded file in a `finally` — the merged rows are the artifact, the file was a courier. `removePack` gives the space back with `DELETE FROM dictionary WHERE source = 'extended'`, which is the whole reason the three tier tables were collapsed into one.
+It is deliberately not served by `apps/server`. tRPC is the wrong transport for a 25 MB binary, and a static host keeps the download working when the API is down.
 
-The install's row count and byte size are recorded in `app_setting` rather than recomputed: `count(*) WHERE source = 'extended'` can't use the `(term, source, rank)` index — `source` isn't its prefix — so reporting the size would scan the table.
+The variable is optional. When it is unset, Settings says the pack is unavailable instead of showing a button that does nothing.
 
-`app/settings.tsx` drives both halves. Installing also sets `preference.offlineDictionaryTier` to `extended`, because the *pack* is per-device while the *preference* is per-account: it's what tells a new phone to fetch it too.
+`installPack` downloads it with `expo-file-system`'s `File.createDownloadTask` (progress, pause and resume come with the task), merges it, and deletes the downloaded file in a `finally` block. The merged rows are the result; the file was only the delivery.
 
-## When the device has no answer
+`removePack` gives the space back:
 
-The bundled pack holds single English words, one sense each, so a phrase, a name, or a coinage will miss — *sietch* is not in WordNet, and shouldn't be. `useDefinition` then calls `dictionary.lookup` on the server, which asks Datamuse and caches the result for every other user ([API layer](/docs/api-layer#the-dictionary-router)) — and writes it into this device's `cached` tier on the way back, so the *next* lookup of that word needs no signal at all.
+```sql
+DELETE FROM dictionary WHERE source = 'extended'
+```
 
-The order matters and is deliberate: **the device looks first, the network second.** Common words never reach the network at all. A measured lookup of "ephemeral" took 590 ms the first time and 4 ms once cached; a bundled hit takes neither.
+That single statement is the whole reason the three tier tables were merged into one.
 
-Suggestion rows are the exception, and they opt out explicitly with `useDefinition(term, { online: false })`. A list resolving one term per row would otherwise fire a request per visible row to fill in text the reader hasn't asked for.
+The row count and byte size are recorded in `app_setting` instead of being recomputed. `count(*) WHERE source = 'extended'` cannot use the `(term, source, rank)` index, because `source` is not its first column. So counting would scan the whole table.
 
-If both miss, that is a real answer rather than a failure. Words invented for a novel exist in no dictionary, and the screen says so.
+`app/settings.tsx` drives both halves. Installing also sets `preference.offlineDictionaryTier` to `extended`, because the **pack** is per-device while the **preference** is per-account. That is what tells a new phone to download it too.
+
+## When the device is online
+
+The device dictionary is the **offline** answer. When `useIsOnline` (`hooks/use-is-online.ts`, over `expo-network`) reports a connection, `useDefinition` asks `dictionary.lookup` first, even for a word the bundled pack holds. The server's definition is AI-written, and it comes with example sentences and a usage note that WordNet does not have ([API layer](/docs/api-layer#the-dictionary-router)).
+
+On the way back, the app writes the answer into this device's `cached` tier, which outranks `core` and `extended`. So a word looked up online once still resolves on a plane.
+
+The device dictionary is still asked in three cases:
+
+| Case | Why |
+| --- | --- |
+| No connection | There is nobody else to ask. The result is `unreachable` if the device has nothing |
+| The server failed or could not be reached | The reader still gets a definition. The result is `unreachable` only if the device has nothing either |
+| The server has no entry | Usually an invented word, but a rare real word may still be in the `extended` pack |
+
+Connectivity is part of the query key. So regaining a signal re-resolves a word the device answered while offline.
+
+The trade-off is latency. A word nobody has looked up before waits for a model call, which takes seconds, where a bundled hit took milliseconds. Every later lookup of that word, by any reader, is a cache read on the server.
+
+Suggestion rows are the exception. They opt out with `useDefinition(term, { online: false })`. A list that resolves one term per row would otherwise fire one request per visible row, and could buy an AI call for text the reader has not asked for.
+
+If everything misses, that is a real answer, not a failure. Words invented for a novel exist in no dictionary, and the screen says so.
 
 ## Still undecided
 
-Voice entry needs an on-device speech-to-text library, and reading a word aloud needs a text-to-speech one (`expo-speech` is a natural fit, not yet installed) — neither has been chosen yet.
+Voice entry needs an on-device speech-to-text library. Reading a word aloud needs a text-to-speech one (`expo-speech` would fit, but it is not installed). Neither has been chosen yet.

@@ -44,9 +44,10 @@ async function contributionDefault(userId: string) {
  * immediate save and the offline flush so the rules below cannot hold for one
  * and not the other. The caller proves folder ownership first.
  *
- * `definition` is whatever the user's own device resolved — from the bundled
- * dictionary offline, or typed by hand — and it is stored on THIS user's row
- * as `definitionOverride`. It is deliberately NOT written into the shared
+ * `definition` is the definition the user's own device showed — from its
+ * offline dictionary, or the lookup it just ran — and it is stored on THIS
+ * user's row as `definitionOverride`. No screen lets a reader type one, and no
+ * procedure edits it afterwards: definitions are not user-editable. It is deliberately NOT written into the shared
  * `dictionaryEntry` cache: definitions are per-device, only lookup counts are
  * shared. Letting a client write the shared table would mean the first person
  * to capture a term defines it, permanently, for every other reader.
@@ -393,7 +394,10 @@ export const wordRouter = router({
     .input(
       z.object({
         id: z.string(),
-        definitionOverride: z.string().optional(),
+        // No definition field, on purpose: readers can't edit a definition. It
+        // comes from a dictionary or the server's lookup, and a reader's own
+        // wording belongs in `personalNote`. zod strips an unknown key, so an
+        // old client still sending `definitionOverride` is ignored, not stored.
         // Free-form annotation alongside the definition rather than replacing
         // it (schema/word.ts). Private by construction: it never reaches the
         // aggregate, which is what keeps reading context out of suggestions.
@@ -407,13 +411,11 @@ export const wordRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const changes: Partial<{
-        definitionOverride: string;
         personalNote: string;
         mastered: boolean;
         masteredAt: Date | null;
         lastReviewedAt: Date;
       }> = {};
-      if (input.definitionOverride !== undefined) changes.definitionOverride = input.definitionOverride;
       if (input.personalNote !== undefined) changes.personalNote = input.personalNote;
       if (input.reviewed) changes.lastReviewedAt = new Date();
       if (input.mastered !== undefined) {

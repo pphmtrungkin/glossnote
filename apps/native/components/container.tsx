@@ -9,6 +9,12 @@ const AnimatedView = Animated.createAnimatedComponent(View);
 type Props = AnimatedProps<ViewProps> & {
   className?: string;
   isScrollable?: boolean;
+  /**
+   * Pad past the status bar. Needed by any screen rendered with
+   * `headerShown: false` — a stack or tab header already clears it otherwise,
+   * and setting this there would leave a header-high gap of dead space.
+   */
+  hasTopInset?: boolean;
   scrollViewProps?: Omit<ScrollViewProps, "contentContainerStyle">;
 };
 
@@ -16,6 +22,7 @@ export function Container({
   children,
   className,
   isScrollable = true,
+  hasTopInset = false,
   scrollViewProps,
   ...props
 }: PropsWithChildren<Props>) {
@@ -25,6 +32,7 @@ export function Container({
     <AnimatedView
       className={cn("flex-1 bg-background", className)}
       style={{
+        paddingTop: hasTopInset ? insets.top : undefined,
         paddingBottom: insets.bottom,
       }}
       {...props}
@@ -33,7 +41,10 @@ export function Container({
         <ScrollView
           contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
-          contentInsetAdjustmentBehavior="automatic"
+          // `automatic` is iOS-only, so it used to inset the scrollable screens
+          // on one platform and neither the non-scrollable ones nor Android.
+          // The inset is `hasTopInset`'s job on both platforms instead.
+          contentInsetAdjustmentBehavior="never"
           {...scrollViewProps}
         >
           {children}

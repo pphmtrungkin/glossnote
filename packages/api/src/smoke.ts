@@ -27,7 +27,8 @@ import {
 } from "@better-vocab/domain";
 import { book } from "@better-vocab/db/schema/book";
 import { env } from "@better-vocab/env/server";
-import { unwrapWrappedObject } from "./enrich";
+import { defineTerm, unwrapWrappedObject } from "./enrich";
+import { resetRateLimits } from "./rate-limit";
 import { mapSearchResults } from "./routers/book";
 import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
@@ -199,10 +200,13 @@ ok("definitions stay on the user's own row; the shared cache is server-only");
 
 // ---- Hardcover search mapping -------------------------------------------
 // A trimmed real Typesense payload. `image` is deliberately absent from the
-// second hit: it is NOT in Hardcover's documented book field list, so a cover
-// must never be assumed present.
+// second hit and an EMPTY OBJECT on the third: it is NOT in Hardcover's
+// documented book field list, so a cover must never be assumed present — and
+// `{}` is what a coverless book actually returns, which is not the same thing
+// as the key being missing. Requiring `url` inside it rejected whole responses
+// over one coverless hit, and common searches always contain a few.
 const mapped = mapSearchResults({
-  found: 2,
+  found: 3,
   hits: [
     {
       document: {
@@ -215,9 +219,10 @@ const mapped = mapSearchResults({
       },
     },
     { document: { id: "1913699", title: "Pale Fire", author_names: [] } },
+    { document: { id: 8675309, title: "Untitled", author_names: [], image: {} } },
   ],
 });
-assert.equal(mapped.length, 2);
+assert.equal(mapped.length, 3);
 assert.deepEqual(mapped[0], {
   externalId: "32897",
   title: "Dune",
@@ -228,9 +233,47 @@ assert.deepEqual(mapped[0], {
 });
 assert.equal(mapped[1].coverImageUrl, null, "a hit with no image maps to a null cover, not a crash");
 assert.equal(mapped[1].externalId, "1913699", "numeric and string ids both normalize to string");
+assert.equal(mapped[2].coverImageUrl, null, "image: {} is a coverless book, not a broken payload");
 assert.deepEqual(mapSearchResults({ found: 0, hits: [] }), [], "no matches is an empty list");
 assert.throws(() => mapSearchResults({ unexpected: true }), /Unexpected search response/);
 ok("search results map from Typesense hits, tolerating a missing cover");
+
+// ---- the proxy request budget --------------------------------------------
+// book.search and dictionary.lookup spend an external quota — Hardcover caps
+// the whole token at 60 requests a minute — so both carry a per-caller budget
+// (see rate-limit.ts). The middleware runs before the handler, which is what
+// lets this assert the limit without a token, a network call, or a real query:
+// an over-budget call must be refused before it can decide anything else.
+//
+// Skipped when a token IS configured, on the same principle as the enrichment
+// checks below: db:smoke never spends someone's quota.
+if (env.HARDCOVER_API_TOKEN) {
+  ok("proxy budget skipped: HARDCOVER_API_TOKEN is set and db:smoke makes no external calls");
+} else {
+  resetRateLimits();
+  const budget = 20;
+  for (let attempt = 0; attempt < budget; attempt++) {
+    await rejectsWith(
+      () => api.book.search({ query: "dune" }),
+      /HARDCOVER_API_TOKEN is not set/,
+      "inside the budget the call reaches the handler",
+    );
+  }
+  await rejectsWith(
+    () => api.book.search({ query: "dune" }),
+    /Too many requests/,
+    "the call past the budget is refused before the handler runs",
+  );
+  // A second caller has their own budget: the limit is per user, not global,
+  // or one reader searching would lock out everybody else.
+  await rejectsWith(
+    () => caller("someone_else").book.search({ query: "dune" }),
+    /HARDCOVER_API_TOKEN is not set/,
+    "another caller starts from a full budget",
+  );
+  resetRateLimits();
+  ok("the proxy budget refuses an over-budget caller, per user, before the handler");
+}
 
 // ---- linking a book to a new folder --------------------------------------
 // Must not match a seeded book's external id: `book` is unique on
@@ -417,6 +460,11 @@ if (env.AI_GATEWAY_API_KEY) {
   );
   assert.equal(unenriched!.exampleSentence, null, "and leaves no half-filled row behind");
   assert.equal(unenriched!.source, "dictionary_api", "source only becomes ai_enhanced once enrichment lands");
+  assert.equal(
+    await defineTerm("eldritch"),
+    null,
+    "without a key, AI defining is unavailable rather than an error, so a new term falls back to Datamuse",
+  );
   ok("a lookup still resolves when enrichment is unavailable, and stays retryable");
 }
 
@@ -617,7 +665,7 @@ await db.update(word).set({ lastReviewedAt: null }).where(eq(word.id, "seed_word
 ok("a reviewed card drops to the back of the queue");
 
 // ---- update --------------------------------------------------------------
-const mastered = await api.word.update({ id: created!.id, mastered: true, definitionOverride: "Rain smell." });
+const mastered = await api.word.update({ id: created!.id, mastered: true });
 assert.equal(mastered!.mastered, true);
 assert.ok(mastered!.masteredAt instanceof Date, "masteredAt is stamped alongside mastered");
 assert.equal((await api.word.update({ id: created!.id, mastered: false }))!.masteredAt, null, "unmastering clears the timestamp");
@@ -627,7 +675,21 @@ ok("word.update sets/clears masteredAt with mastered");
 // turn must not blank the note, and neither may touch definitionOverride.
 const noted = await api.word.update({ id: created!.id, personalNote: "Mum uses this after storms." });
 assert.equal(noted!.personalNote, "Mum uses this after storms.");
-assert.equal(noted!.definitionOverride, "Rain smell.", "a note is stored alongside the definition, not instead of it");
+assert.equal(
+  noted!.definitionOverride,
+  "The smell of rain on dry earth.",
+  "a note is stored alongside the definition, not instead of it",
+);
+
+// Definitions are not user-editable. An old client that still sends one has it
+// stripped, not stored — asserted, because the regression would be silent: the
+// edit would simply start working again.
+const edited = await api.word.update({
+  id: created!.id,
+  personalNote: "Mum uses this after storms.",
+  definitionOverride: "Rain smell.",
+} as never);
+assert.equal(edited!.definitionOverride, "The smell of rain on dry earth.", "word.update has no way to change a definition");
 const reviewed = await api.word.update({ id: created!.id, reviewed: true });
 assert.ok(reviewed!.lastReviewedAt instanceof Date, "the server stamps the review time, the client only says it happened");
 assert.equal(reviewed!.personalNote, "Mum uses this after storms.", "a review turn leaves every other field alone");

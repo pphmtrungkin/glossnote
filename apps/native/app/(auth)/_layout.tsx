@@ -7,6 +7,7 @@ export default function AuthLayout() {
           there rather than on a bare form. */}
       <Stack.Screen name="index" />
       <Stack.Screen name="sign-in" />
+      <Stack.Screen name="sign-up" />
     </Stack>
   );
 }

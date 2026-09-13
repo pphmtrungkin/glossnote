@@ -21,4 +21,19 @@ export const env = createEnv({
     EXPO_PUBLIC_DICTIONARY_PACK_URL: process.env.EXPO_PUBLIC_DICTIONARY_PACK_URL,
   },
   emptyStringAsUndefined: true,
+  /**
+   * There is no `server` block here, so the server/client split this flag
+   * drives has nothing to split: the validated schema is the `client` one
+   * either way. All it still does is arm t3-env's access guard, which throws
+   * "Attempted to access a server-side environment variable on the client" on
+   * *any* unprefixed property read of the proxy — including the stray probes
+   * React Native's dev tooling makes (`prototype`, `displayName`, `default`),
+   * which is an explosion with no stack pointing anywhere useful. Nothing is
+   * being protected: server variables live in `./server`, and TypeScript
+   * already rejects an unknown key at the call site.
+   *
+   * Keep this in step with the file — a `server` block added here would need
+   * the flag gone, and would belong in `./server` anyway.
+   */
+  isServer: true,
 });

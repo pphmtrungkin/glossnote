@@ -1,34 +1,49 @@
 ---
 title: AI enrichment
-description: The example sentence and usage note added to a shared definition, once per word for everyone
+description: AI-written definitions, example sentences and usage notes, generated once per word for everyone
 ---
 
-A definition tells you what a word means. It doesn't tell you whether anyone still says it, or what it looks like in a sentence. That second half is generated: after `dictionary.lookup` resolves a base definition, it adds an **example sentence** and a **usage note** to the same shared `dictionaryEntry` row.
+A dictionary definition tells you what a word means. It does not tell you whether people still say it, or what it looks like in a real sentence.
+
+AI writes both halves now. When `dictionary.lookup` meets a term nobody has resolved, it asks the model for the whole entry in one call — a **definition**, **example contexts** and a **usage note** — the way a search engine answers "define quixotic". All of it lands on one shared `dictionaryEntry` row.
 
 ```ts
+// From a live call, trimmed to two of its three contexts.
 dictionaryEntry: {
-  term: "eldritch",
-  definition: "Strange in a way that inspires fear; otherworldly.",   // Datamuse — deterministic
-  contexts: [                                                         // generated
-    "The house had an {eldritch} stillness about it.",
-    "She described an {eldritch} light that none of them could explain.",
+  term: "quixotic",
+  definition: "Impractical and idealistic, often involving actions that ignore practical consequences.",
+  contexts: [
+    "His {quixotic} attempt to clean up the local park single-handedly inspired many neighbors to join his effort.",
+    "The senator’s {quixotic} proposal to eliminate all taxes failed because it ignored basic economic realities.",
   ],
-  exampleSentence: "The house had an eldritch stillness about it.",   // contexts[0], unmarked
-  usageNote: "Literary; mostly in horror writing.",                   // generated
+  exampleSentence: "His quixotic attempt to clean up ...",   // contexts[0], braces removed
+  usageNote: "Usually implies a mix of noble and foolish idealism; rarely used literally.",
   source: "ai_enhanced",
-  enrichedAt: 2026-09-08T...,
+  enrichedAt: 2026-09-13T...,
 }
 ```
 
-The base definition is never rewritten. Enrichment only ever adds the two columns beside it, which is why a failed enrichment is a non-event rather than a broken lookup.
+Before the model is asked anything, Datamuse is asked whether the word exists at all. A word it has never heard of — "sietch", "gom jabbar" — is never sent to the model. That check is the real spoiler guard; see [Datamuse decides whether it is a word](/docs/api-layer#datamuse-decides-whether-it-is-a-word).
 
-## One call per word, for everyone
+When the AI call fails, `lookup` saves Datamuse's definition instead, and a second, smaller pass runs: `enrichDefinition` adds contexts and a usage note **next to** Datamuse's definition. That pass never rewrites the definition, so a failed enrichment is a non-event, not a broken lookup.
 
-This is the constraint the whole design is built around, and it comes straight from the spec: *each unique word triggers at most one AI enrichment call across the entire user base*.
+<Callout type="warn">
+This departs from SoftwareSpec §8.3, which takes the base definition from a dictionary API and uses AI only for the example and the note. The app now follows the UserFlow's online mode instead, which calls for an "AI-enhanced definition".
+</Callout>
 
-It holds because the row is keyed by **term**, not by user. `dictionaryEntry` is a shared cache with no relationship to any single reader (see [Data model](/docs/data-model#why-definitions-live-in-their-own-table-dictionaryentry)) — so the five-hundredth reader to look up "ephemeral" is answered from the same row as the first, and costs nothing. Because lookups cluster around popular books, a busy title warms the cache for every later reader of it.
+## One AI call per word, for all users
 
-`enrichedAt` is what makes "at most one" true in practice. It is both the marker and the lock, and the claim is taken **before** the call, not after:
+This is the rule the whole design is built around, and it comes from the spec:
+
+> Each unique word triggers at most one AI enrichment call across the entire user base.
+
+It works because the row is keyed by **term**, not by user. `dictionaryEntry` is a shared cache with no link to any reader (see [Data model](/docs/data-model#why-definitions-have-their-own-table-dictionaryentry)).
+
+So the 500th reader who looks up "ephemeral" gets the same row as the first, and costs nothing. Because readers cluster around popular books, one busy title warms the cache for everyone who reads it later.
+
+### `enrichedAt` is the marker and the lock
+
+The claim is taken **before** the AI call, not after:
 
 ```ts
 // packages/api/src/routers/dictionary.ts
@@ -40,106 +55,226 @@ const [claimed] = await db
 if (!claimed) return entry;   // someone else is already paying for this word
 ```
 
-Two readers who hit the same brand-new word at the same moment buy one enrichment between them, not one each: exactly one of them wins that conditional update, and the loser returns the base definition immediately. Checking `enrichedAt` and *then* calling would satisfy the rule on paper and double the bill under concurrency.
+Read what that does. Two readers hit the same brand-new word at the same moment. Exactly one of them wins the conditional update. The other one gets `claimed === undefined` and returns the base definition right away.
 
-A call that fails releases the claim (`enrichedAt` back to `null`), so a timeout costs the term nothing worse than staying plain until someone looks it up again. The row is never left half-filled: a blank sentence or note is rejected rather than stored, because a half-filled row looks enriched and would never be retried.
+So they buy one enrichment between them, not one each.
 
-## Why this is server-side
+Checking `enrichedAt` first and calling afterwards would satisfy the rule on paper, and double the bill in real traffic.
 
-The same rule as [Book search](/docs/book-search#why-this-has-to-be-server-side), for the same reason. `AI_GATEWAY_API_KEY` lives in `apps/server/.env`, validated in `packages/env/src/server.ts`, and is **never** an `EXPO_PUBLIC_*` variable — a key shipped in the Expo bundle is extractable from the app binary, and one misbehaving client would spend everyone's budget. The app calls its own tRPC procedure; the server calls the provider. It never talks to an AI provider directly, and there is no procedure that would let it pass a prompt through.
+If the call fails, the claim is released (`enrichedAt` goes back to `null`). So a timeout costs the word nothing worse than staying plain until someone looks it up again.
 
-The key is **optional**, like Hardcover's. Without one, `dictionary.lookup` still resolves definitions through Datamuse and still caches them — words simply never gain a sentence. Enrichment is an upgrade on top of a definition the reader already has, so it must never be able to turn a working lookup into a failed one.
+The row is never left half-filled. A blank sentence or note is rejected, not stored. A half-filled row looks enriched, so it would never be retried.
 
-| What went wrong | What the reader gets |
-| --- | --- |
-| No `AI_GATEWAY_API_KEY` configured | The base definition |
-| Gateway or provider down, or slower than 15s | The base definition; the claim is released, so the next lookup retries |
-| `402` (no credit, or a budget hit) or `403` (model not on your tier) | The base definition |
-| Rate-limited, and the retry backoff outlasts the 15s budget | The base definition; the claim is released |
-| The model declines, or the output can't be repaired into the schema | The base definition |
-| A field comes back blank | The base definition — no half-filled row |
+### A new term has nothing to lock
 
-## The prompt has one hard rule
+That claim needs a row to update. A term nobody has looked up has no row until the model answers, so `lookup` keeps two things in server memory instead:
 
-The example sentence is **invented, never borrowed**. The prompt requires a neutral everyday sentence and explicitly forbids referencing a plot, character, or setting.
+- **One in-flight request per term.** Concurrent lookups of the same new word wait on the same call.
+- **The words nobody can define.** When Datamuse has never heard of a term, or the model returns an empty definition for it, the term is remembered. A thousand readers of *Dune* looking up "gom jabbar" do not buy a thousand requests.
 
-That isn't stylistic. Readers log words *mid-book*, and a sentence lifted from the book they're halfway through is a spoiler — the same concern that keeps context sentences out of [crowdsourced discovery](/docs/api-layer#wordsuggestions). Suggestions are spoiler-safe structurally, because no column in that result could carry a sentence. Here the column exists, so the rule lives in the prompt instead.
+Both are per server process: a second instance can spend its own call on the same new word, and a restart forgets the unknown words. That is fine on one instance. The `ponytail:` comment in `routers/dictionary.ts` marks where to move them into Postgres.
+## Why this runs on the server
 
-The usage note is capped at fifteen words and asked to say something a reader could not have read off the definition itself — register, or how rare the word is.
+The same rule as [Book search](/docs/book-search#why-this-must-run-on-the-server), for the same reason.
 
-## Swapping the model
+`AI_GATEWAY_API_KEY` lives in `apps/server/.env`, is validated in `packages/env/src/server.ts`, and must **never** be an `EXPO_PUBLIC_*` variable. A key inside the Expo bundle can be extracted from the app binary, and one bad client would spend everyone's budget.
 
-Everything about the provider is behind one function, `enrichDefinition` in `packages/api/src/enrich.ts`. It takes a term and a definition and returns `{ exampleSentence, usageNote }` or `null`. Nothing else in the codebase imports an AI SDK, knows a model name, or handles a provider error.
+The app calls its own tRPC procedure, and the server calls the provider. The app never talks to an AI provider, and there is no procedure that would let it send a prompt through.
+
+The key is **optional**, like Hardcover's. Without it, every new term goes to Datamuse, and words simply never gain a sentence.
+
+AI must never turn a working lookup into a failed one. Every failure has a dictionary answer behind it:
+
+| What went wrong | A new term gets | A term already cached gets |
+| --- | --- | --- |
+| No `AI_GATEWAY_API_KEY` configured | Datamuse's definition | Its definition |
+| Gateway or provider down, or slower than 15s | Datamuse's definition | Its definition. The claim is released, so the next lookup retries |
+| `402` (no credit or budget reached) or `403` (model not on your tier) | Datamuse's definition | Its definition |
+| Rate limited, and the retry wait is longer than the 15s budget | Datamuse's definition | Its definition. The claim is released |
+| The model refuses, or its output cannot be repaired into the schema | Datamuse's definition | Its definition |
+| A field comes back blank | Datamuse's definition. No half-filled row | Its definition. No half-filled row |
+| Datamuse has never heard of the word | `null`, remembered. The model is never asked | — |
+| The model says the word is not general English | `null`, remembered | — |
+| Datamuse cannot be reached | An error. The phone answers from its own dictionary | Its definition |
+
+A Datamuse definition saved on the new-term path is then offered to `enrichDefinition`, so it can still gain its sentences.
+
+## The prompts share one hard rule
+
+Nothing may come **from a book**. Both prompts ask for invented, everyday example sentences, and forbid any mention of a plot, character or setting.
+
+The definition prompt carries the same rule for the definition itself. A word that exists only inside one book or franchise — "sietch", "gom jabbar" — gets an **empty** definition, not a gloss drawn from that book. The empty definition is also how the model says "not a word": an earlier version asked for a `known: boolean`, and the model answered `false` for "ephemeral".
+
+This is not a style choice. Readers save words **in the middle of a book**. A sentence or a definition taken from the book they are halfway through is a spoiler.
+
+It is the same concern that keeps sentences out of [crowdsourced discovery](/docs/api-layer#wordsuggestions). There, spoiler safety is structural: no column in that result could carry a sentence. Here the column does exist, so the rule lives in the prompt instead — backed, for definitions, by the Datamuse check, because a model does not always follow it.
+
+The usage note has a limit of fifteen words. It is asked to say something the reader could not guess from the definition: how formal the word is, or how rare.
+
+## Changing the model
+
+Everything about the provider is behind one function: `enrichDefinition` in `packages/api/src/enrich.ts`. It takes a term and a definition, and returns `{ exampleSentence, usageNote }` or `null`.
 
 ```ts
 export async function enrichDefinition(term: string, definition: string): Promise<Enrichment | null>
 ```
 
-Requests go through [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), which is what makes "swappable" real rather than aspirational. The model is a string:
+Nothing else in the codebase imports an AI SDK, knows a model name, or handles a provider error.
+
+Requests go through [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). That is what makes "swappable" real. The model is one string:
 
 ```ts
-const ENRICHMENT_MODEL = "zai/glm-4.7-flashx";
+const ENRICHMENT_MODEL = "google/gemini-2.5-flash-lite";
 ```
 
-Moving to a different model — or a different *vendor* — is that line. No second SDK, no second account, no second key, and no change to the tRPC contract, the client, or `dictionary.lookup`'s claim/release logic. The gateway also retries another provider when the first one is failing, which for a call that's already allowed to fail softly is a free reduction in how often the column stays empty.
+Changing the model — or the whole vendor — is that line. No second SDK, no second account, no second key. The tRPC contract, the client, and the claim logic all stay the same.
 
-Three choices worth knowing:
+The gateway also retries a different provider when the first one is failing. For a call that is already allowed to fail quietly, that is a free improvement.
 
-- **A small, fast tier** (GLM 4.7 FlashX), on purpose. An example sentence and a register note are not frontier-reasoning work, and this runs once per unique word across every reader — the spec calls for the cheap tier here and it's the right call. At roughly $0.06/$0.40 per million tokens it is an order of magnitude below the frontier-lite tier (Claude Haiku 4.5 is $1/$5) for a task where the two are hard to tell apart. Tokens through the gateway cost what they cost at the provider, with no markup.
-- **`generateObject` with a Zod schema**, rather than parsing prose out of a text response. The AI SDK picks whichever structured-output mechanism the routed model supports, which is the other half of keeping the model swappable — a hand-rolled `response_format` would be one provider's dialect. The two fields are the exact shape of the two nullable columns, so nothing is mapped on the way in.
-- **15 seconds and one retry**, tighter than the SDK's defaults, because this happens inside a lookup a reader is waiting on.
+Three choices worth knowing about:
 
-Gateway model ids are `provider/model` and must match the catalog exactly — a slug invented by analogy will 404. `GET https://ai-gateway.vercel.sh/v1/models` lists every id, needs no auth, and is the way to check a replacement before pasting it into that constant.
+- **A small, fast model** (Gemini 2.5 Flash-Lite), on purpose. A one-sentence definition and three example sentences are not frontier reasoning work, and this runs once per unique word for every reader. Tokens through the gateway cost the same as at the provider, with no markup. See [Choosing the model](#choosing-the-model) for how it was picked.
+- **`generateObject` with a Zod schema**, instead of parsing prose out of a text answer. The AI SDK picks whichever structured-output method the routed model supports. That is the other half of keeping the model swappable: a hand-written `response_format` would only work for one provider. The two fields match the two nullable columns exactly, so nothing has to be mapped.
+- **15 seconds and one retry**, tighter than the SDK defaults, because a reader is waiting on this lookup.
 
-## Contexts, and the cloze card
+<Callout type="warn">
+Gateway model ids are `provider/model` and must match the catalog exactly. A slug you guessed by analogy will return 404.
 
-The model is asked for three sentences rather than one, each with the target word **wrapped in braces**:
+`GET https://ai-gateway.vercel.sh/v1/models` lists every id and needs no auth. Check a replacement there before pasting it into that constant.
+</Callout>
+
+## Contexts, and the fill-in-the-blank card
+
+The model is asked for three sentences, not one. In each one, the target word is **wrapped in braces**:
 
 ```
 "The house had an {eldritch} stillness about it."
 ```
 
-That marking is what lets one stored string serve two features without either reader guessing where the word sits — the word view strips the braces, and [`word.quiz`](/docs/api-layer#wordquiz) replaces the span with a blank and keeps what was inside as the answer.
+Those braces let one stored string serve two features, and neither one has to guess where the word is:
 
-Marking beats searching for the term at read time, because the sentence rarely contains the term as it was captured: a context for "run" may say "running", one for "sietch" may capitalise it at the start of a sentence. A search would blank the wrong span, or none at all — and a card whose prompt still contains its own answer is worse than no card. The marked span also gives the reveal the inflected form the reader should have guessed rather than the dictionary headword.
+- the word screen removes the braces
+- [`word.quiz`](/docs/api-layer#wordquiz) replaces the braced part with a blank, and keeps what was inside as the answer
 
-`parseContext` in `@better-vocab/domain` is the single definition of that format, for the same reason `normalizeTerm` lives there: three callers read it — the quiz builder, the app's context panel, and enrichment's own validation on the way in — and a drift between them would put the blank in the wrong place.
+### Why marking beats searching
 
-Contexts that ignore the format are **dropped rather than repaired**, since a guess at where the word was would blank the wrong one. Partial output still counts: two good contexts beat discarding a call over a third. `exampleSentence` is no longer generated separately — it's the first context with its braces removed, so there is one artifact to get right instead of two that can disagree.
+You might think we could just search the sentence for the term at read time. That fails often, because the sentence rarely contains the term exactly as it was saved:
 
-The prompt also asks for sentences that *give the meaning away by context*, which is what makes a card worth answering: a sentence that still reads fine with any word in the gap is a wasted card.
+- a context for "run" may say "running"
+- a context for "sietch" may capitalise it at the start of a sentence
 
-## Cheap models have quirks; budget for two of them
+A search would blank the wrong part of the sentence, or nothing at all. A card whose question still contains its own answer is worse than no card.
 
-Both of these are measured against GLM through the gateway, not anticipated.
+The marked part also gives the reveal the **inflected** form the reader should have guessed, instead of the dictionary headword.
 
-**It wraps.** On roughly half of calls the model returns the right two fields one level too deep — `{"answer": {exampleSentence, usageNote}}` — which fails schema validation outright. `generateObject`'s `repairText` hook runs *only* after parsing or validation has already failed, which makes it the right place for this: zero cost on the happy path, and it rescues the one shape we actually see.
+`parseContext` in `@better-vocab/domain` is the single definition of that format. It lives there for the same reason as `normalizeTerm`: three callers read it — the quiz builder, the app's context panel, and enrichment's own validation — and any drift between them would put the blank in the wrong place.
+
+Contexts that do not follow the format are **dropped, not repaired**. Guessing where the word was would blank the wrong part.
+
+Partial output still counts. Two good contexts are better than throwing away a whole call because of a bad third one.
+
+`exampleSentence` is not generated separately any more. It is the first context with its braces removed, so there is one thing to get right instead of two that can disagree.
+
+The prompt also asks for sentences that **give the meaning away from context**. That is what makes a card worth answering. A sentence that reads fine with any word in the gap is a wasted card.
+
+## Choosing the model
+
+On 2026-09-13, fourteen of the cheapest gateway models that support tool calls each defined the same five words through `defineTerm`: three real ("ephemeral", "quixotic", "petrichor") and two that exist only in *Dune* ("gom jabbar", "sietch"). A right answer is a definition for a real word, and an **empty** definition for an invented one.
+
+| Model | Right | Median time | Per 1,000 new words |
+| --- | --- | --- | --- |
+| `alibaba/qwen3.7-flash` | 5 / 5 | 2.1 s | $0.026 |
+| `mistral/mistral-small` | 5 / 5 | 1.4 s | $0.066 |
+| `google/gemini-2.5-flash-lite` (chosen) | 4 / 5 | 1.3 s | $0.083 |
+| `inception/mercury-2.5` | 4 / 5 | 0.8 s | $0.044 |
+| `amazon/nova-micro`, `amazon/nova-lite`, `nvidia/nemotron-3.5-lightning`, `mistral/ministral-8b` | 3 / 5 | 0.7–2.4 s | $0.04–0.08 |
+| `deepseek/deepseek-v4-flash-0731`, `zai/glm-4.7-flashx` (previous) | 2 / 5 | 1.5–17 s | $0.05–0.35 |
+| `mistral/ministral-3b` | 1 / 5 | 1.1 s | $0.05 |
+| `openai/gpt-oss-20b`, `openai/gpt-5-nano`, `poolside/laguna-s-2.1-free` | 0 / 5 | — | — |
+
+Cost per word is measured from real token counts, not list prices. It varies more than the price sheet suggests: GLM spent 811 output tokens per word, Qwen 83.
+
+**Price alone would have picked badly.** The failures that matter are the invented words, because a wrong definition is saved on a row every reader shares:
+
+- `deepseek-v4-flash` defined "gom jabbar" as "a test that reveals whether a person can control their deepest fears" — a plot spoiler.
+- `nova-lite` called it "a fictional device from the 'Dune' series".
+- `ministral-3b` and `ministral-8b` invented confident, wrong meanings for "sietch": a piece of embroidery, and a grating sound.
+- `gpt-5-nano` never ran at all. It rejects `reasoning: "none"` with a 400 (see below).
+
+Gemini 2.5 Flash-Lite missed one: it defined "sietch" as "a subterranean dwelling or community, especially one adapted to a desert". That is *Dune*'s meaning, without naming the book.
+
+A wider follow-up run found its misses were not even consistent. Asked twice at the default temperature, "sietch", "dementor" and "mellon" each came back blank once and defined once — and the first answer is saved for every reader. The calls now run at **`temperature: 0`**, which made every answer repeat across three tries: all eight real words defined, six of seven invented words empty.
+
+The seventh was "sietch", now defined on every call, with sentences like `"The Fremen lived in underground {sietches}"`. No prompt wording is a guarantee, which is why Datamuse screens each new word before the model sees it.
+
+When you swap the model, repeat the test with invented words, not just real ones. A model that defines every real word perfectly can still spoil a book.
+
+## Cheap models have quirks: plan for them
+
+The first two were measured with GLM 4.7 FlashX, the model this used before Gemini. The code that handles them stays: they are the failures a cheap model swapped in later is most likely to repeat.
+
+### It wraps the answer
+
+On about half of the calls, the model returns the right two fields one level too deep:
+
+```json
+{ "answer": { "exampleSentence": "...", "usageNote": "..." } }
+```
+
+That fails schema validation. `generateObject`'s `repairText` hook runs **only after** parsing or validation has already failed, which makes it the right place to fix this. It costs nothing when the model behaves, and it rescues the one broken shape we actually see.
 
 ```ts
 // packages/api/src/enrich.ts
 export function unwrapWrappedObject(text: string): string | null
 ```
 
-One key holding one object is a wrapper, and the object inside it is the answer. Anything else — two keys, a scalar, an array, prose — returns `null`, the enrichment is skipped, and the term stays plain. Guessing at an unrecognised shape would risk filing something odd into a table every reader shares, which is a worse outcome than an empty column. `db:smoke` asserts all six cases against captured payloads, without spending a call.
+The rule is narrow: one key holding one object is a wrapper, and the object inside is the answer. Anything else — two keys, a number, an array, prose — returns `null`. The enrichment is skipped and the word stays plain.
 
-**It reasons anyway.** The call asks for `reasoning: "none"` — filling two short fields from a definition it was handed is not a reasoning task, and output tokens are the expensive half of this model's bill. Measured, GLM spent 250 reasoning tokens regardless. Treat the option as a request the provider may ignore: it costs nothing to ask, and a model swapped in later may honour it.
+Guessing at an unknown shape would risk writing something strange into a table that every reader shares. An empty column is the better outcome. `db:smoke` tests all six cases against captured payloads, with no API call.
 
-## What's verified, and what isn't
+### It reasons anyway
 
-`bun run db:smoke` asserts the parts that don't need a provider: that a cached term is served from the shared row, that the base definition is never rewritten, that a failed or unconfigured enrichment releases its claim and leaves no half-filled row, and that an already-enriched row is returned untouched rather than enriched twice.
+The call asks for `reasoning: "none"`. Filling in two short fields from a definition is not a reasoning task, and output tokens are the expensive half of this model's bill.
 
-Those checks **skip themselves** when `AI_GATEWAY_API_KEY` is set. Same rule as Hardcover: the smoke test makes no external calls, and a check that spends money on every run is a check people stop running.
+Measured: GLM spent 250 reasoning tokens anyway.
 
-One live call has been run end to end against the gateway, which is what turned up both quirks above:
+Treat that option as a request the provider may ignore. It costs nothing to ask, and a model added later may respect it.
 
-```
-petrichor 10225ms OK
-   e: We walked outside to enjoy the petrichor that filled the air.
-   u: Mostly found in literature rather than everyday speech.
-```
+### Some providers reject the request outright
 
-What that leaves unverified is the path through `dictionary.lookup` itself — the claim, the write-back, `source` moving to `ai_enhanced` — against a live model rather than the offline assertions. Look up a word nobody has resolved yet and read the row back.
+The opposite also happens. `openai/gpt-5-nano` answers every call that sets `reasoning: "none"` with a 400: "'none' is not supported with the 'gpt-5-nano-2025-08-07' model". Every lookup then falls back to Datamuse, silently.
 
-Worth knowing before you do: on an AI Gateway account with no purchased credits, most of the catalog is either unavailable (`deepseek/deepseek-v4-flash-0731` answers "free tier users do not have access to this model") or rate-limited within a handful of requests. When that happens the SDK's retry backoff usually outlasts the 15-second budget, and the call fails soft exactly as designed — the claim is released and the next lookup of that term tries again.
+So a model swap needs one live call before it ships. A slug that exists in the catalog is not proof the call works.
 
-Nothing renders these two columns in the app yet; `useDefinition` already returns the whole entry, so showing them is a render change, not a server one.
+## What is tested, and what is not
+
+`bun run db:smoke` tests the parts that need no provider:
+
+- a cached term is served from the shared row
+- the base definition is never rewritten
+- a failed or unconfigured enrichment releases its claim and leaves no half-filled row
+- an already-enriched row is returned untouched, not enriched twice
+- `defineTerm` returns `null` with no key, so a new term falls back to Datamuse instead of failing
+
+Those checks **skip themselves** when `AI_GATEWAY_API_KEY` is set. Same rule as Hardcover: `db:smoke` makes no external calls. A check that spends money on every run is a check people stop running.
+
+The whole path through `dictionary.lookup` has run once against the live gateway and a local database, on 2026-09-13:
+
+| Lookup | Time | AI calls | Result |
+| --- | --- | --- | --- |
+| "laconic", first time | 2.1 s | 1 | Saved with `source: "ai_enhanced"`, `enrichedAt` set, three contexts |
+| "apricity", first time | 1.1 s | 1 | The same |
+| "lembas", first time | 18 ms | 0 | `null`. Datamuse does not know it, so the model was never asked |
+| "horcrux", first time | 1.2 s | 1 | `null`, and no row. Datamuse knows it; the model left it blank |
+| Each of those again | 2–5 ms | 0 | Served from the row, or from the unknown-word list |
+| "sesquipedalian", two lookups at once | — | 1 | One row, the same id returned to both |
+
+That run was a one-off script, not a committed check. To repeat it, look up words nobody has resolved yet and read the rows back — then delete them, because the table is shared.
+
+<Callout type="info">
+Know this first: on an AI Gateway account with no purchased credits, most of the catalog is either unavailable (`deepseek/deepseek-v4-flash-0731` answers "free tier users do not have access to this model") or rate limited after a few requests.
+
+When that happens, the SDK's retry wait is usually longer than the 15-second budget. The call then fails softly, exactly as designed: the claim is released, and the next lookup of that word tries again.
+</Callout>
+
+Both columns now have readers in the app. `app/word/[id].tsx` shows `exampleSentence` and `usageNote`, and `word.quiz` carries `usageNote` onto the card's reveal.

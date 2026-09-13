@@ -3,29 +3,215 @@ title: Implementation status
 description: What's built vs. still a gap, tracked against the GlossNote user-flow spec
 ---
 
-Tracked against the GlossNote user-flow doc, section by section. "Schema only" means the Postgres or on-device tables exist, but no procedure or UI actually uses them yet — a foundation, not a feature.
+This page tracks the GlossNote user-flow document, section by section.
+
+Two words are used in a specific way:
+
+- **Built** — a procedure and a screen both exist, and you can use the feature.
+- **Schema only** — the Postgres or on-device tables exist, but no procedure or screen uses them yet. That is a foundation, not a feature.
+
+## Summary
 
 | Flow section | Status |
 | --- | --- |
-| Onboarding | Partial — email/password auth works ([Authentication](/docs/authentication)); magic link and OAuth aren't configured. The dictionary pipeline has now been run for real: a 9.2 MB `core` asset ships in the binary and merges on first launch, so offline lookups work before the app has touched the network ([Offline dictionary](/docs/offline-dictionary#getting-the-two-tiers-onto-a-device)). A welcome screen now opens the signed-out flow (`app/(auth)/index.tsx`), built from the design canvas; both its buttons lead to the combined sign-in/sign-up screen, since that screen already carries both forms. |
-| Creating a folder | `folder.create` / `list` / `update` / `delete` implemented ([API layer](/docs/api-layer)) and wired to the Shelf tab — list, create, status chips, long-press delete. `folder.update` also renames a folder; no screen calls that half yet. `book.search` proxies Hardcover and the Shelf's new-folder form searches it, links the picked book, and falls back to a typed title ([Book search](/docs/book-search)). Untested against the live API — set `HARDCOVER_API_TOKEN` and run a real search. |
-| Logging a word — offline | `useDefinition` resolves a term against the device first and the server second, caching the answer locally for next time ([Offline dictionary](/docs/offline-dictionary#one-resolver)). The bundled `core` tier now ships — 74,441 terms, merged on first launch — so common words never reach the network, and the downloadable `extended` pack (127,311 terms) installs from Settings once `EXPO_PUBLIC_DICTIONARY_PACK_URL` points at a hosted file. `word.createMany` is the flush endpoint the queue was designed for and is tested, but nothing on the device writes a `pending_sync` row or calls it, so the capture screen still requires the network to save. |
-| Logging a word — online | `word.create` implemented and wired to the add-word modal. A definition supplied by the device is stored on that user's own row, never in the shared cache ([Data model](/docs/data-model)). `dictionary.lookup` resolves definitions through Datamuse and caches them in `dictionaryEntry`, and the add-word screen calls it when the device's own dictionary misses ([API layer](/docs/api-layer#the-dictionary-router)). AI enrichment now runs on top of that: `dictionary.lookup` adds an example sentence and usage note to the shared row, once per unique term across the whole user base, behind `enrichDefinition` ([AI enrichment](/docs/ai-enrichment)) — optional, so the app still resolves definitions without a key. One live call verified end to end; the write-back path through `dictionary.lookup` still hasn't run against a live model, so look up a word nobody has resolved yet and read the row back. No screen renders `exampleSentence`/`usageNote` yet. No text-to-speech, and voice entry needs an on-device speech-to-text library that hasn't been chosen. |
-| Home | Implemented from the design canvas (`app/(tabs)/index.tsx`): greeting and due-count, "currently reading" drawn from the newest `reading` folder with its book and saved-word count, a three-up capture row, and the first three due words with their mastery dots. The shelf moved to its own tab rather than being replaced. Three designed affordances are deliberately absent or inert — see below. |
-| Browsing inventory | `word.listByFolder` and `word.search` implemented, behind the folder detail screen and the Search tab. A word row now opens `word/[id]`, the design's word screen, which is where `mastered`, the personal note, and the AI `exampleSentence`/`usageNote` are rendered — the first reader those two columns have had. Delete is a long-press. No sorting or filtering beyond the term match yet. |
-| Crowdsourced discovery | Implemented. `word.suggestions` returns terms other readers of the book saved, minus your own and minus what's already in your folder, ranked by distinct readers ([API layer](/docs/api-layer)). The folder screen shows them, resolving each definition from the *local* dictionary — counts are shared, definitions are not. Deliberately not cached and deliberately not a counter table. |
-| Review / retention | `word.quiz` builds fill-in-the-blank cards from the shared usage contexts on `dictionary_entry`, scoped to a folder or run across all of them, least-recently-reviewed first ([API layer](/docs/api-layer#wordquiz)) — the flashcard session the flow asks for, costing no AI call of its own. `app/review.tsx` renders it: a progress rail, the blanked sentence, a reveal carrying the definition and usage note, and "Not yet" / "Got it". The run is fetched once and never refetched mid-session, since stamping a review would reorder the deck under the reader. Home and the folder screen both open it. `word.update` toggles `mastered` (stamping and clearing `masteredAt` with it) and takes `reviewed: true` to stamp `lastReviewedAt`, so a flashcard turn has somewhere to sync to. The design's three grades collapse to two, because `word.update` records a review as a timestamp and not a grade — two buttons writing the identical row is a distinction the data can't keep. The weekly digest is still absent and stays that way until there is push infrastructure to deliver it — the unused `pushToken` table was deleted rather than left as scaffolding, and a digest query with no consumer would be the same mistake. |
-| Settings / account | `preference.get` / `preference.update` implemented ([API layer](/docs/api-layer#the-preference-router)), so the crowdsourced opt-out and the offline dictionary tier are both settable. `app/settings.tsx` is the caller — grouped rows from the design canvas, covering the offline dictionary download, the aggregate opt-out, and sign-out, which used to be a tab-header button of its own. Account deletion is now enabled in Better Auth (password, or a session fresher than a day; every domain table cascades off `user.id`). Changing an email still isn't possible — Better Auth requires a verification mail and this app has no email sender. Export is deliberately client-side (the flow calls for a local file generated from cached data), and "Sync now" waits on the device queue. |
-| Mode indicators | Not implemented — `expo-network` is installed but nothing uses it yet. |
+| Onboarding | Partial — email and password work; magic link and OAuth are not configured |
+| Creating a folder | Built, including book search |
+| Logging a word — offline | Built, including the offline queue |
+| Logging a word — online | Built, with AI-written definitions. No voice input |
+| Home | Built |
+| Browsing inventory | Built. No sorting or filtering yet |
+| Crowdsourced discovery | Built |
+| Review / retention | Built. No weekly digest |
+| Settings / account | Built, except changing an email and "Sync now" |
+| Mode indicators | Not built as UI, but connectivity is now detected |
+
+## Onboarding
+
+Email and password sign-in works ([Authentication](/docs/authentication)). Magic link and OAuth are not configured.
+
+The dictionary pipeline has been run for real. A 9.2 MB `core` asset ships inside the app binary and merges on first launch, so offline lookups work before the app has ever used the network. See [Offline dictionary](/docs/offline-dictionary#getting-the-two-tiers-onto-a-device).
+
+The signed-out flow has three screens, all built from the design canvas:
+
+| Route | Screen |
+| --- | --- |
+| `app/(auth)/index.tsx` | Welcome |
+| `app/(auth)/sign-in.tsx` | Sign in |
+| `app/(auth)/sign-up.tsx` | Create account |
+
+Sign in and sign up replace each other with `router.replace`, so the back stack never grows a chain of them.
+
+The two forms (`components/sign-in.tsx`, `components/sign-up.tsx`) are plain React Native inputs, not HeroUI form components. They share one labelled-field component, `components/text-field.tsx`, which owns the focus ring, the error message, and the show/hide toggle on the password field.
+
+## Creating a folder
+
+`folder.create`, `list`, `update` and `delete` are implemented ([API layer](/docs/api-layer)) and wired to the Shelf tab: list, create, status chips, and long-press to delete.
+
+`folder.update` can also rename a folder. No screen calls that half yet.
+
+`book.search` proxies Hardcover. The Shelf's new-folder form searches it, links the picked book, and falls back to a typed title ([Book search](/docs/book-search)).
+
+Still untested against the live API. Set `HARDCOVER_API_TOKEN` and run a real search.
+
+## Logging a word — offline
+
+`useDefinition` asks the server whenever the device is online, and the device's own dictionary when it is not, when the server fails, or when the server has no entry. Server answers are cached locally for next time ([Offline dictionary](/docs/offline-dictionary#one-resolver)).
+
+Both dictionary tiers work:
+
+- `core` (74,441 terms) ships in the binary and merges on first launch, so common words never reach the network.
+- `extended` (127,311 terms) installs from Settings, once `EXPO_PUBLIC_DICTIONARY_PACK_URL` points at a hosted file.
+
+The offline capture queue is now complete on both sides:
+
+| Side | Where |
+| --- | --- |
+| Server | `word.createMany`, which reports each capture separately ([API layer](/docs/api-layer#wordcreatemany--sending-the-offline-queue)) |
+| Device: write and send the queue | `apps/native/lib/pending-sync.ts` |
+| Device: the one save path | `apps/native/hooks/use-capture-word.ts` |
+| Device: flush on reconnect | `apps/native/hooks/use-pending-sync.ts` |
+
+So saving a word with no signal now works. The word goes into `pending_sync`, the screen says it will sync later, and the flush runs when `expo-network` reports a connection again.
+
+## Logging a word — online
+
+`word.create` is implemented and wired to the add-word modal. A definition sent by the device is stored on that user's own row, never in the shared cache ([Data model](/docs/data-model)).
+
+`dictionary.lookup` checks a new term against Datamuse, then has AI write its definition, example contexts and usage note in one call. The Datamuse check keeps words invented for a book from being defined, and Datamuse's own definition is saved instead when the AI call fails. Results are cached in `dictionaryEntry` for every reader. The add-word screen calls it whenever the device is online ([API layer](/docs/api-layer#the-dictionary-router)).
+
+A row that came from Datamuse is enriched once afterwards, behind `enrichDefinition` ([AI enrichment](/docs/ai-enrichment)). AI is optional, so the app still resolves definitions with no API key.
+
+The whole path through `dictionary.lookup` has run against the live gateway and a local database. Real words were saved already enriched, invented words returned `null` with no row, repeat lookups cost no AI call, and two lookups of one new word at the same moment bought one call ([AI enrichment](/docs/ai-enrichment#what-is-tested-and-what-is-not)).
+
+Both AI columns now have readers: `app/word/[id].tsx` shows them, and the review card's reveal carries `usageNote`.
+
+Not built: text-to-speech, and voice entry. Voice entry needs an on-device speech-to-text library, and none has been chosen.
+
+## Home
+
+Built from the design canvas (`app/(tabs)/index.tsx`):
+
+- a greeting and a due count
+- "currently reading", taken from the newest `reading` folder, with its book and saved-word count
+- a three-button capture row
+- the first three due words, each with its mastery dot
+
+The shelf moved to its own tab instead of replacing this screen.
+
+Three affordances from the design are deliberately absent or disabled — see [What we left out](#what-we-left-out).
+
+## Browsing inventory
+
+`word.listByFolder` and `word.search` are implemented, behind the folder detail screen and the Search tab.
+
+Tapping a word row opens `word/[id]`, the design's word screen. That screen renders `mastered`, the personal note, and the AI `exampleSentence` and `usageNote`.
+
+Delete is a long-press. There is no sorting or filtering yet, beyond matching the term.
+
+## Crowdsourced discovery
+
+Built.
+
+`word.suggestions` returns terms other readers of the book saved, minus your own words and minus anything already in your folder, ranked by the number of distinct readers ([API layer](/docs/api-layer)).
+
+The folder screen shows them and resolves each definition from the **local** dictionary. Counts are shared; definitions are not.
+
+It is deliberately not cached, and deliberately not a counter table.
+
+## Review / retention
+
+`word.quiz` builds fill-in-the-blank cards from the shared usage contexts on `dictionary_entry`. A run can be scoped to one folder or cover all of them, least-recently-reviewed first ([API layer](/docs/api-layer#wordquiz)). It costs no AI call of its own.
+
+`app/review.tsx` renders it: a progress rail, the sentence with a blank, a reveal with the definition and usage note, and two buttons — "Not yet" and "Got it".
+
+The run is fetched once and never refetched during the session. Stamping a review would reorder the deck while the reader is using it.
+
+Home and the folder screen both open it.
+
+`word.update` toggles `mastered` (setting and clearing `masteredAt` with it) and takes `reviewed: true` to stamp `lastReviewedAt`.
+
+The design's three grades became two buttons, because `word.update` records a review as a timestamp, not a grade. Two buttons writing exactly the same row is a difference the data cannot keep.
+
+The weekly digest is not built, and stays that way until there is push infrastructure to deliver it. The unused `pushToken` table was deleted rather than kept as scaffolding.
+
+## Settings / account
+
+`preference.get` and `preference.update` are implemented ([API layer](/docs/api-layer#the-preference-router)), so the crowdsourced opt-out and the offline dictionary tier can both be changed.
+
+`app/settings.tsx` is the caller. It has grouped rows from the design canvas, covering the offline dictionary download, the aggregate opt-out, and sign-out.
+
+Account deletion is enabled in Better Auth (password, or a session fresher than one day; every domain table cascades off `user.id`). But no screen calls it yet.
+
+Changing an email is still not possible. Better Auth requires a verification mail, and this app has no email sender.
+
+Export is deliberately client-side: the flow asks for a local file built from cached data. "Sync now" is not built; the automatic flush covers the same job.
+
+## Mode indicators
+
+There is no offline banner in the UI yet.
+
+`expo-network` is now used, though. `use-pending-sync.ts` watches connectivity to decide when to flush the queue, so the signal a banner would need is already in the app.
+
+## Hardening
+
+Both external proxies carry a per-user request budget, because they spend someone else's quota: 20 per minute for `book.search`, 60 per minute for `dictionary.lookup` ([API layer](/docs/api-layer#both-proxies-have-a-request-budget)).
+
+Better Auth's rate limiter is enabled explicitly, not left to its `NODE_ENV` default, plus a custom rule for `/delete-user` ([Authentication](/docs/authentication#rate-limiting)).
+
+Both use in-memory counters. That is correct for one server instance, and marked with a `ponytail:` comment for the day there are several.
 
 ## What this means in practice
 
-The data model — both Postgres and the on-device SQLite schema — was designed section-by-section against the full flow doc, so almost everything above has a home to land in already. The first vertical slice is now walkable end to end: sign in, see your shelf, create a folder, log a word into it, browse and search. Book search closed the biggest gap: `book` rows now have a producer, which is what crowdsourced discovery was waiting on — and that feature now exists end to end. The bundled dictionary asset and the screens that were waiting on the server surface — review, settings, word detail — now exist. What's still missing on the client is the offline capture queue and the screens with no server behind them at all. AI enrichment closed on the server side: every column in `dictionary_entry` now has a producer. Offline sync is now half-built rather than absent: the server endpoint exists and is tested, the device-side queue and flush trigger are not written. Two items additionally need a library decision before they can be built at all: on-device speech-to-text (voice capture) and a push-notification sending mechanism (weekly digest).
+The data model — Postgres and the on-device SQLite schema — was designed section by section against the full flow document. So almost everything above already had a place to land.
 
-The table now reads as a client-side backlog rather than a server one: every flow section above has the procedures it needs, and what remains for each is a screen, an asset, or a library choice.
+The first vertical slice now works end to end: sign in, see your shelf, create a folder, save a word into it, browse and search, review it.
 
-One change of direction worth recording: several tables and columns that existed as groundwork — `book_word_aggregate`, `push_token`, `book.raw`, `book.topics`, `dictionary_entry.audio_url`, `word.example_sentence`, and the FTS5 index in the dictionary build — were **deleted** rather than kept. None had a producer or a consumer, and each carried real maintenance cost. The bet is that adding a column alongside the feature that reads it is cheaper than keeping schema warm for a feature that may never arrive.
+The things that closed the biggest gaps, in order:
+
+1. **Book search** gave `book` rows a producer, which is what crowdsourced discovery was waiting for.
+2. **The bundled dictionary asset** made offline lookups real instead of theoretical.
+3. **AI enrichment** gave every column in `dictionary_entry` a producer.
+4. **The device queue** made `word.createMany` reachable, so offline capture round-trips.
+
+Two items still need a library decision before they can be built at all:
+
+- on-device speech-to-text, for voice capture
+- a way to send push notifications, for the weekly digest
+
+## What we left out
+
+The design canvas has 18 screens. Some parts of it were not built, on purpose:
+
+- **Inert affordances** render as disabled: Scan page, Say it.
+- **Numbers with no data behind them** are omitted rather than invented: reading progress, page numbers, streaks, shared-shelf totals.
+- **Screens with no server behind them** are omitted: camera, tutor chat, feed, discover, profile, and the offline / downloads / syncing screens.
+
+## Tables and columns we deleted
+
+Several tables and columns existed as groundwork and were **deleted**, not kept:
+
+`book_word_aggregate`, `push_token`, `book.raw`, `book.topics`, `dictionary_entry.audio_url`, `word.example_sentence`, and the FTS5 index in the dictionary build.
+
+None of them had a producer or a consumer, and each one carried real maintenance cost.
+
+The bet: adding a column together with the feature that reads it is cheaper than keeping schema warm for a feature that may never arrive.
 
 ## Checking it still works
 
-`bun run db:smoke` is the repo's only automated check — a self-cleaning script that drives the real `appRouter` against a seeded local Postgres and asserts what the schema, not TypeScript, enforces: relation joins, ownership scoping, the partial unique index on `(user_id, book_id)`, capture idempotency, cascade deletes, the Hardcover book upsert, the enrichment claim on `dictionary_entry`, and the live aggregate query. Run `bun run db:start && bun run db:seed` first. It calls neither Hardcover nor an AI provider — the enrichment checks assert the *unconfigured* path, which is also the failure path, and skip themselves when `AI_GATEWAY_API_KEY` is set rather than spending money on a smoke run.
+`bun run db:smoke` is the repo's only automated check.
+
+It is a self-cleaning script that drives the real `appRouter` against a seeded local Postgres. It asserts what the schema enforces, not what TypeScript enforces:
+
+- relation joins
+- ownership scoping
+- the partial unique index on `(user_id, book_id)`
+- capture idempotency
+- cascade deletes
+- the Hardcover book insert-or-update
+- the enrichment claim on `dictionary_entry`
+- the live crowdsourced aggregate query
+- the per-user request budget on `book.search`
+
+Run `bun run db:start && bun run db:seed` first.
+
+It calls neither Hardcover nor an AI provider. The enrichment checks assert the **unconfigured** path, which is also the failure path. They skip themselves when `AI_GATEWAY_API_KEY` is set, rather than spending money on a smoke run. The request-budget check skips itself the same way when `HARDCOVER_API_TOKEN` is set.

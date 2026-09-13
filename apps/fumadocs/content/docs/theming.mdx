@@ -3,7 +3,7 @@ title: Theming
 description: How page themes work in React Native, and how the Ochre spot scheme is wired in
 ---
 
-The app ships five page themes. The default and its night half come from the **Ochre spot** scheme; the middle three are Kindle's page colours.
+The app ships five page themes. The default and its night version come from the **Ochre spot** scheme. The middle three are Kindle's page colours.
 
 | Theme | Page | Ink | Where it comes from |
 | --- | --- | --- | --- |
@@ -11,22 +11,30 @@ The app ships five page themes. The default and its night half come from the **O
 | `light` | `#ffffff` | `#1b1b1b` | Kindle "White" — paper, not the stock grey |
 | `sepia` | `#fbf0d9` | `#4a3b28` | Kindle "Sepia" |
 | `green` | `#dce7d5` | `#263323` | Kindle "Green", the pale mint page on newer Paperwhites |
-| `dark` | `#191713` | `#eceae4` | Ochre spot, night reading |
+| `dark` | `#191713` | `#eceae4` | Ochre spot, for night reading |
 
-## One accent, spent deliberately
+## One accent colour, used carefully
 
-The scheme has exactly one accent — ochre `#a8560f`, `#d99a52` at night — and no secondary or tertiary colour by design. It is spent on two things and nothing else:
+The scheme has exactly one accent colour: ochre `#a8560f`, or `#d99a52` at night. There is no second or third colour, by design.
 
-- the reader's own saved words
-- the single main action on a screen
+It is used for two things only:
 
-Everything else is ink, paper, or grey. In particular **other readers' data stays muted**: lookup counts and shared shelves from [crowdsourced discovery](/docs/api-layer#wordsuggestions) are reference material, not the reader's progress, and colouring them like progress is what turns a reading tool into a dashboard.
+1. the reader's own saved words
+2. the single main action on a screen
 
-Mastery is the one place colour carries meaning — `state-new` is deliberately grey, because an unpractised word should not shout.
+Everything else is ink, paper, or grey.
+
+In particular, **other readers' data stays grey**. Lookup counts and shared shelves from [crowdsourced discovery](/docs/api-layer#wordsuggestions) are reference information, not the reader's own progress. Colouring them like progress turns a reading tool into a dashboard.
+
+Mastery is the one place where colour carries meaning. `state-new` is deliberately grey, because a word you have not practised yet should not shout at you.
 
 ## One file decides how everything looks
 
-`apps/native/global.css` is the whole system. Each theme is a `@variant` block that sets the custom properties **HeroUI Native** reads — `--background`, `--surface`, `--accent`, `--danger`, and so on. Every component in the library resolves its colours from those, so overriding them re-skins the entire app without touching a single component.
+`apps/native/global.css` is the whole system.
+
+Each theme is a `@variant` block that sets the CSS custom properties **HeroUI Native** reads: `--background`, `--surface`, `--accent`, `--danger`, and so on. Every component in the library takes its colours from those properties.
+
+So overriding them re-skins the entire app, and you never touch a component file.
 
 ```css
 @layer theme {
@@ -41,21 +49,37 @@ Mastery is the one place colour carries meaning — `state-new` is deliberately 
 }
 ```
 
-Every theme must declare the *same* set of variables. A token missing from one theme resolves to nothing, and the component renders uncoloured rather than falling back — so themes are added by copying the full block, not by overriding a few values.
+<Callout type="warn">
+Every theme must declare the **same** set of variables.
 
-## Adding a theme touches three files, in step
+A token missing from one theme resolves to nothing. There is no fallback: the component renders with no colour at all. So add a theme by copying the whole block, not by overriding a few values.
+</Callout>
 
-1. The `@variant` block in `global.css`
-2. `extraThemes` in `metro.config.js` — Uniwind only knows about `light` and `dark` on its own
-3. `READING_THEMES` and `READING_THEME_META` in `contexts/app-theme-context.tsx`
+## Adding a theme means editing three files together
 
-Then **restart Metro**. The theme union in `uniwind-types.d.ts` is generated from `extraThemes` at build time, and that file is gitignored — so a stale one is what makes `Uniwind.setTheme("ochre")` fail to typecheck with `not assignable to '"system" | "light" | "dark" | "sepia" | "green" | "autumn"'` — a union naming the themes that existed last time Metro ran. The fix is a bundle, not an edit.
+1. The `@variant` block in `global.css`.
+2. `extraThemes` in `metro.config.js`. On its own, Uniwind only knows `light` and `dark`.
+3. `READING_THEMES` and `READING_THEME_META` in `contexts/app-theme-context.tsx`.
 
-## The default has to be set at runtime
+Then **restart Metro**.
 
-Uniwind starts on `light` and has no config option for a different default. Worse, `light` is a theme a reader can legitimately choose, so "the current theme is light" and "the reader hasn't chosen a theme" are indistinguishable at read time. A `DEFAULT_THEME` constant used as a read-side fallback therefore does nothing — the app opens white regardless.
+The theme union in `uniwind-types.d.ts` is generated from `extraThemes` at build time, and that file is gitignored. A stale copy is what makes `Uniwind.setTheme("ochre")` fail to typecheck, with an error like:
 
-What actually selects the default is the **absence of a stored value**:
+```
+not assignable to '"system" | "light" | "dark" | "sepia" | "green" | "autumn"'
+```
+
+That union names the themes that existed the last time Metro ran. The fix is a new bundle, not a code edit.
+
+## The default theme must be set at runtime
+
+Uniwind starts on `light`, and there is no config option to change that.
+
+It gets worse. `light` is also a theme a reader can genuinely choose. So "the current theme is light" and "the reader has not chosen a theme" look identical when you read the value.
+
+That is why a `DEFAULT_THEME` constant used as a read-time fallback does nothing. The app still opens white.
+
+What actually chooses the default is the **absence of a stored value**:
 
 ```ts
 getAppSetting(db, THEME_SETTING_KEY).then((stored) => {
@@ -63,13 +87,17 @@ getAppSetting(db, THEME_SETTING_KEY).then((stored) => {
 });
 ```
 
-Uniwind holds the active theme in memory only, so this same effect is what replays a saved choice on every cold start (the choice lives in the on-device `app_setting` table — see [Offline dictionary](/docs/offline-dictionary)). `_layout.tsx` holds the splash screen until `isThemeReady`, so the theme lands before the first frame instead of flashing the wrong page colour.
+Uniwind keeps the active theme in memory only. So this same effect is what restores a saved choice on every cold start. The choice itself lives in the on-device `app_setting` table — see [Offline dictionary](/docs/offline-dictionary).
 
-## The scheme's own names, as utilities
+`_layout.tsx` holds the splash screen until `isThemeReady`. So the theme is applied before the first frame, instead of flashing the wrong page colour.
 
-The scheme ships more vocabulary than HeroUI has slots for — `primary-pressed`, `primary-tint`, the three mastery states — so `global.css` registers them as Tailwind colours too. `bg-primary`, `text-ink`, `text-state-learning`, `text-ink/70` and `rounded-card` all compile to real RN styles.
+## The scheme's own names, as utility classes
 
-The ones that have a HeroUI counterpart are declared as **aliases**, not copies:
+The scheme has more names than HeroUI has slots for: `primary-pressed`, `primary-tint`, and the three mastery states. So `global.css` also registers them as Tailwind colours.
+
+`bg-primary`, `text-ink`, `text-state-learning`, `text-ink/70` and `rounded-card` all compile to real React Native styles.
+
+The names that have a HeroUI counterpart are declared as **aliases**, not copies:
 
 ```css
 @theme {
@@ -80,27 +108,50 @@ The ones that have a HeroUI counterpart are declared as **aliases**, not copies:
 }
 ```
 
-That indirection is the point: `text-ink` then follows the page the reader chose, resolving to the same value HeroUI's own components use, under the name the scheme speaks. Copying the hex into `@theme` instead would give one colour two spellings that drift apart the first time a theme is edited. Only the tokens with no HeroUI counterpart carry values directly, with `dark` overriding them.
+That indirection is the whole point. `text-ink` follows the page the reader chose, and resolves to the same value HeroUI's own components use — under the name the scheme speaks.
 
-Uniwind resolves the chain at runtime — in the bundle, `--color-ink` compiles to `vars => vars["--foreground"]?.(vars)` rather than a frozen string, and alpha variants like `text-ink/70` emit a themed `colorMix` rule alongside the static fallback.
+If we copied the hex value into `@theme` instead, one colour would have two spellings. They would drift apart the first time someone edits a theme.
+
+Only the tokens with no HeroUI counterpart hold values directly, with `dark` overriding them.
+
+Uniwind resolves the chain at runtime. In the bundle, `--color-ink` compiles to `vars => vars["--foreground"]?.(vars)`, not a frozen string. Alpha variants like `text-ink/70` emit a themed `colorMix` rule next to the static fallback.
 
 <Callout type="warn">
-The scheme arrived as a NativeWind v4 drop — a `tailwind.config.js`, `@tailwind base;` directives, and colours as space-separated RGB channels for `<alpha-value>`. None of that applies here: this app runs **Uniwind with Tailwind v4**, which is CSS-first (no JS config), and v4 handles alpha itself, so the channel-triplet trick is unnecessary. What ported is the palette and its rules; the config files did not.
+The scheme arrived as a NativeWind v4 drop: a `tailwind.config.js`, `@tailwind base;` directives, and colours written as space-separated RGB channels for `<alpha-value>`.
+
+None of that applies here. This app runs **Uniwind with Tailwind v4**, which is CSS-first with no JS config, and v4 handles alpha itself, so the RGB-channel trick is unnecessary.
+
+What we kept is the palette and its rules. The config files did not port.
 </Callout>
 
-### Colours a className can't reach
+### Colours a className cannot reach
 
-StatusBar, `react-native-svg` fills, chart libraries and `Animated` take colour values, not class names. `lib/palette.ts` serves those, re-exporting the scheme's own values so there is one spelling of ochre in the codebase.
+StatusBar, `react-native-svg` fills, chart libraries and `Animated` all take colour **values**, not class names.
 
-Its `usePalette()` reads the **app's** theme context rather than React Native's `useColorScheme()`, which the scheme's own file reaches for. The distinction matters here: this app's theme is a choice the reader makes and we persist in SQLite across five themes, not a mirror of the OS setting. Keying off the OS would hand a reader on the Sepia page the light palette while the rest of the app rendered sepia, and would ignore their choice entirely on a phone whose system theme disagrees.
+`lib/palette.ts` serves those cases. It re-exports the scheme's own values, so there is one spelling of ochre in the codebase.
 
-## The reading face
+Its `usePalette()` reads the **app's** theme context, not React Native's `useColorScheme()`.
 
-Source Serif 4 (SIL OFL, drawn by Adobe for long-form reading on screen) is the scheme's face, loaded in `app/_layout.tsx`. Five faces ship: regular, its italic, medium, semibold, bold.
+That difference matters. This app's theme is a choice the reader makes, and we save it in SQLite across five themes. It is not a mirror of the OS setting.
 
-React Native doesn't synthesise weights or slants for a custom family — **each face registers under its own family name**. So bold text is `font-serif-bold`, not `font-serif font-bold`, and italic is `font-italic`, not the `italic` utility. Naming a face that isn't loaded renders as the system serif with no error, which is why the loaded set and the `@theme` block are kept to the same five.
+If we keyed off the OS, a reader on the Sepia page would get the light palette while the rest of the app rendered sepia. And on a phone whose system theme disagreed, their choice would be ignored entirely.
 
-The scheme's semantic names are aliases onto those faces, the same trick the colours use:
+## The reading font
+
+Source Serif 4 is the scheme's face. It is SIL OFL licensed and was drawn by Adobe for long-form reading on screens. It is loaded in `app/_layout.tsx`.
+
+Five faces ship: regular, italic, medium, semibold, bold.
+
+React Native does **not** create bold or italic versions of a custom font family. **Each face is registered under its own family name.**
+
+So:
+
+- bold text is `font-serif-bold`, not `font-serif font-bold`
+- italic is `font-italic`, not the `italic` utility
+
+Naming a face that is not loaded renders as the system serif, with no error. That is why the loaded list and the `@theme` block are kept to the same five faces.
+
+The scheme's semantic names are aliases onto those faces — the same trick the colours use:
 
 ```css
 --font-body: var(--font-serif);
@@ -108,21 +159,23 @@ The scheme's semantic names are aliases onto those faces, the same trick the col
 --font-italic: var(--font-serif-italic);
 ```
 
-So `font-heading` and `font-serif-semibold` are the same face under two names, and changing the reading face is one edit rather than five.
+So `font-heading` and `font-serif-semibold` are the same face under two names. Changing the reading font is one edit, not five.
 
 <Callout type="info">
-Literata used to fill this slot — it stood in for Amazon's proprietary Bookerly while the Kindle page themes were the whole design. It came out with the scheme swap rather than being left installed unused.
+Literata used to fill this slot. It stood in for Amazon's Bookerly font while the Kindle page themes were the whole design. It was removed with the scheme swap, instead of being left installed and unused.
 </Callout>
 
-## Verifying a theme change
+## How to verify a theme change
 
-Typechecking is not enough: `tsc` reads the generated theme union, and the colours themselves only exist after Uniwind compiles the CSS. Bundle the app and look at what came out:
+Typechecking is not enough. `tsc` reads the generated theme union, and the colours themselves only exist after Uniwind compiles the CSS.
+
+So bundle the app and look at the output:
 
 ```bash
 cd apps/native && bunx expo start --port 8099 --clear
 curl -s -o bundle.js "http://localhost:8099/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false"
 grep -c "a8560f" bundle.js       # the palette reached the app
-grep -o 'vars\["--color-ink"\][^,]*' bundle.js   # the alias resolves, rather than freezing
+grep -o 'vars\["--color-ink"\][^,]*' bundle.js   # the alias resolves, instead of freezing
 ```
 
-That's how the traps above were caught — a colour that typechecks perfectly and renders as nothing is otherwise invisible until someone opens the screen.
+This is how the traps above were found. A colour that typechecks perfectly and renders as nothing is invisible until someone opens the screen.

@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { protectedProcedure, router } from "../index";
+import { rateLimit } from "../rate-limit";
 
 const HARDCOVER_ENDPOINT = "https://api.hardcover.app/v1/graphql";
 
@@ -33,7 +34,11 @@ const hitSchema = z.object({
     id: z.union([z.string(), z.number()]),
     title: z.string(),
     author_names: z.array(z.string()).nullish(),
-    image: z.looseObject({ url: z.string() }).nullish(),
+    // A book with no cover comes back as `image: {}` — the key is present and
+    // the object is empty, not null. So `url` has to be optional *inside* the
+    // object as well: requiring it here rejected the whole response over one
+    // coverless hit, and searches like "1984" or "the" always contain a few.
+    image: z.looseObject({ url: z.string().nullish() }).nullish(),
     description: z.string().nullish(),
     release_year: z.number().nullish(),
   }),
@@ -124,6 +129,10 @@ export const bookRouter = router({
   // requires the token stay out of the client, and SoftwareSpec §8.1 says the
   // same about every third-party key.
   search: protectedProcedure
+    // Hardcover allows 60 requests a minute for the whole token, shared by
+    // every reader. The client debounces, so a real search costs one request
+    // per typed phrase; this is the ceiling for a client that stops.
+    .use(rateLimit({ name: "book.search", max: 20, windowSeconds: 60 }))
     .input(z.object({ query: z.string().trim().min(2), limit: z.number().int().min(1).max(25).default(10) }))
     .query(async ({ input }) => {
       if (!env.HARDCOVER_API_TOKEN) {

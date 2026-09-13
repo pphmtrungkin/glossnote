@@ -3,15 +3,19 @@ title: Data model
 description: The Postgres schema, table by table, and why each design choice was made
 ---
 
-Every table here exists to serve one of three needs: organizing books, capturing words, or sharing definitions cheaply across users. None of it is generic CRUD boilerplate — if a column looks unusual, there's a reason, and this page tries to explain the reason rather than just the shape.
+Every table here does one of three jobs: organize books, save words, or share definitions between users.
 
-Schema files live in `packages/db/src/schema/`, one file per domain group, all re-exported from `schema/index.ts`.
+None of it is generic CRUD boilerplate. If a column looks strange, there is a reason for it. This page explains the reasons, not only the shapes.
+
+The schema files are in `packages/db/src/schema/`. There is one file per group of tables. They are all re-exported from `schema/index.ts`.
 
 ## Tables owned by Better Auth
 
-`user`, `session`, `account`, `verification` (`schema/auth.ts`) are generated and managed by Better Auth — see [Authentication](/docs/authentication). Treat them as a black box: `user.id` is the anchor every other table hangs off of, but application code never writes raw queries against `session`/`account` directly.
+Better Auth creates and manages four tables: `user`, `session`, `account` and `verification` (`schema/auth.ts`). See [Authentication](/docs/authentication).
 
-## Organizing what you're reading: `book` + `folder`
+Treat these tables as a black box. `user.id` is the anchor for every other table, but our code never writes raw queries against `session` or `account`.
+
+## Organizing what you read: `book` + `folder`
 
 ```ts
 // schema/book.ts (shape)
@@ -19,16 +23,26 @@ book: { id, provider, externalId, title, authors[], coverImageUrl, description }
 folder: { id, userId, bookId?, title, status: "reading" | "finished" | "misc" }
 ```
 
-**`book`** is a *cache* of metadata pulled from an external book API (see [Book search](/docs/book-search)). Two things worth noticing:
+### `book`
 
-- `provider` and `externalId` are plain `text`, not a Postgres enum. That's deliberate — the metadata source is still just Hardcover today, but keeping it as text means adding or swapping providers later never requires a schema migration. The pair is uniquely indexed, which is what makes `folder.create`'s upsert idempotent.
-- There is no `raw jsonb` column holding the unparsed upstream response, and no `topics[]`. Both were dropped: `raw` stored a copy of something re-fetchable in one API call, and `topics` fed an AI suggestion feature that doesn't exist. Columns kept "just in case" are rows you pay to store and migrate forever — add them back with the feature that reads them.
+`book` is a **cache**. It stores book information that we copied from an outside API (see [Book search](/docs/book-search)).
 
-**`folder`** is a user's personal shelf entry — "I'm tracking this book." `bookId` is nullable on purpose, because a folder doesn't have to be tied to a real book (freeform/misc lists are a supported case, not an edge case). `title` is copied from the book at creation time — a small denormalization so the home screen can render a list of folders without joining to `book` on every load.
+Two details matter:
 
-Think of `book` as one shared Wikipedia-style page per book, and `folder` as one personal binder per user per book.
+- `provider` and `externalId` are plain `text` columns, not a Postgres enum. This is on purpose. Today the only source is Hardcover. But text means we can add or change providers later without writing a database migration. The two columns together have a unique index. That unique index is what lets `folder.create` insert-or-update safely, even if two people pick the same book at the same time.
+- There is no `raw jsonb` column and no `topics[]` column. Both were deleted. `raw` stored a copy of data we can fetch again with one API call. `topics` was for an AI feature that does not exist. A column you keep "just in case" still costs storage and still has to be migrated forever. Add such a column back on the day you add the feature that reads it.
 
-## The core entity: `word`
+### `folder`
+
+A `folder` is one shelf for one user. It means "I am tracking this book."
+
+`bookId` can be null. This is intentional: a folder does not need a real book. A freeform list (for example, "words from podcasts") is a normal case, not an edge case.
+
+`title` is copied from the book when the folder is created. This is a small duplication, but it lets the home screen list all folders without joining the `book` table every time.
+
+A simple way to picture it: `book` is one shared page per book, like a Wikipedia article. `folder` is one personal notebook, per user, per book.
+
+## The main table: `word`
 
 ```ts
 // schema/word.ts (shape)
@@ -41,42 +55,131 @@ word: {
 }
 ```
 
-This is what gets created when a user taps "+ Add word." Several columns encode a real product decision, not just a data type:
+One row is created every time a user saves a word. Many of these columns exist because of a product decision, not only because of a data type.
 
-- **`term` vs. `normalizedTerm`** — `term` preserves exactly what the user typed or said ("Ubiquitous"); `normalizedTerm` is the lowercased/trimmed form ("ubiquitous") used for matching, deduping, and grouping. Always *display* `term`; always *search or join on* `normalizedTerm`.
+### `term` and `normalizedTerm`
 
-  That normalized form is produced by exactly one function, `normalizeTerm` in `@better-vocab/domain`, and everything that matches a word to a definition goes through it — the two routers, the app's resolver, and the script that stamps the bundled dictionary at build time. It was written out inline in all four places until recently; a drift between the build script and the runtime lookups would have made every offline lookup miss silently. See the [changelog](/docs/changelog).
-- **`userId` and `folderId` both live on `word`**, even though `folder` already has a `userId` you could join through. This is intentional duplication (denormalization): "show me all my words across every folder" is a common query, and this way it never needs a join just to check ownership.
-- **`bookId` follows the same logic, one level up.** It's copied from `folder.bookId` at the moment a word is created, so the crowdsourced-discovery query ("every word logged against this book, by any user, across all their different folders") doesn't need to join through `folder` either. There's a unique index on `(folderId, normalizedTerm)` and a lookup index on `(bookId, contributesToAggregate)` specifically to make both the per-folder dedup check and this aggregate query fast.
-- **`dictionaryEntryId` is nullable** — that's the "pending definition" state from offline capture. The word exists before a real definition does; it gets attached later once one resolves.
-- **`personalNote` sits *alongside* the definition; `definitionOverride` replaces it.** That's the whole difference between the two, and it's why both exist. A note is private by construction — nothing in the crowdsourced result could carry one, which is what makes spoiler safety structural rather than a convention someone has to remember.
-- **`mastered`/`masteredAt` and `lastReviewedAt` are the review state**, and the server owns both timestamps: `word.update` stamps them from `mastered` and `reviewed: true` rather than accepting a date from the client, so a device with a wrong clock can't backdate a review. Every field of that procedure is written only when sent, so a flashcard turn can't blank a note typed on the same row.
-- **`contributesToAggregate` is copied from the user's settings at the moment the word is created**, not read live from their current settings every time. Why copy instead of reference? Because if someone flips their opt-out setting next month, a word they logged three months ago shouldn't retroactively vanish from (or reappear in) other people's crowdsourced view. It's a snapshot in time, not a live flag — the same reasoning you'd apply to storing a price at the time of purchase rather than looking it up fresh every time you view an old receipt.
+`term` keeps exactly what the user typed or said, for example `"Ubiquitous"`.
 
-## Why definitions live in their own table: `dictionaryEntry`
+`normalizedTerm` is the lowercase, trimmed version, for example `"ubiquitous"`. We use it for matching, for removing duplicates, and for grouping.
 
-Here's the question worth sitting with: if 500 users all look up the word "ephemeral," should the definition be stored 500 times?
+The rule is simple:
+
+- **Display** `term`.
+- **Search and join on** `normalizedTerm`.
+
+Only one function creates that normalized form: `normalizeTerm` in `@better-vocab/domain`. Everything that matches a word to a definition calls it — the two routers, the app's resolver, and the script that builds the offline dictionary file.
+
+This function used to be copied by hand in all four places. That was dangerous. If the build script and the app had disagreed by even one character, every offline lookup would have failed, and nothing would have shown an error. See the [changelog](/docs/changelog).
+
+### Why `userId` and `folderId` are both on `word`
+
+`folder` already has a `userId`, so we could find the owner with a join. We store it twice anyway.
+
+This is called denormalization: copying data on purpose to make a common query faster. "Show me all my words from every folder" is a very common query. With `userId` on the row, it never needs a join just to check who owns the word.
+
+### Why `bookId` is on `word` too
+
+`bookId` is copied from `folder.bookId` at the moment the word is created. It follows the same idea, one level higher.
+
+The crowdsourced query asks: "which words did any user save for this book, in any of their folders?" With `bookId` on the row, that query does not need to join `folder` either.
+
+Two indexes support this:
+
+- a unique index on `(folderId, normalizedTerm)` — used for the duplicate check inside one folder
+- an index on `(bookId, contributesToAggregate)` — used for the crowdsourced query
+
+### `dictionaryEntryId` can be null
+
+Null means "we do not have a definition yet". This is the pending state after an offline capture. The word row exists first, and a real definition is attached later, when one is found.
+
+### `personalNote` and `definitionOverride`
+
+Both hold text on one user's copy of a word, but only one of them is written by the reader:
+
+- `personalNote` is the reader's own words, and sits **next to** the definition. It is the only text a reader can write.
+- `definitionOverride` is the definition the phone showed when the word was saved. It is kept only when the server had no shared entry yet, and no procedure edits it: **definitions are not user-editable**.
+
+That difference is the reason both exist. A note is always private, because no crowdsourced result has a column that could carry one. Spoiler safety is built into the shape of the data, so no developer has to remember a rule.
+
+### Review state
+
+`mastered`, `masteredAt` and `lastReviewedAt` hold the review state.
+
+The server writes both timestamps itself. `word.update` takes `mastered` and `reviewed: true` from the client, and then stamps the dates. It never accepts a date from the client. So a phone with a wrong clock cannot backdate a review.
+
+That procedure also writes only the fields it received. So finishing a flashcard cannot erase a note that was typed on the same row.
+
+### `contributesToAggregate` is a snapshot
+
+This column is copied from the user's settings at the moment the word is saved. We do not read the current setting later.
+
+Why copy instead of read live? Imagine a user turns the setting off next month. A word they saved three months ago should not suddenly disappear from other people's crowdsourced view. And it should not come back if they turn the setting on again.
+
+It is the same idea as saving the price on an order. You store the price the customer paid, not today's price.
+
+## Why definitions have their own table: `dictionaryEntry`
+
+Here is the question to think about. If 500 users look up the word "ephemeral", should we store that definition 500 times?
 
 ```ts
 // schema/dictionary.ts (shape)
 dictionaryEntry: { id, term (unique), definition, contexts[], exampleSentence?, usageNote?, source: "bundled" | "dictionary_api" | "ai_enhanced", enrichedAt? }
 ```
 
-No — `dictionaryEntry` is a **shared cache**, one row per unique term, with no relationship to any single user. The first time the server resolves "ephemeral" (dictionary API, then AI enrichment), it is saved here, and every later request for that term is answered from this table. No repeat API call, no repeat cost.
+No. `dictionaryEntry` is a **shared cache**: one row per unique term, with no link to any user.
 
-**Only the server may write this table.** `word.create` accepts a `definition` from the device, but stores it on that user's own `word.definitionOverride` — never here. This is the privacy rule the whole product rests on: readers share *how often a word was saved*, never *what it means*. If a client could write the shared row, the first person to capture a term would define it, permanently, for every other reader, with no way to correct it. `db:smoke` asserts this directly.
+The first time the server resolves "ephemeral", it saves the row here. Every later request for that word is answered from this table. No second API call, and no second cost.
 
-Because of that, `word.dictionaryEntryId` stays `null` until a server-side resolver fills it. Every device answers its own lookups from the bundled dictionary offline, or from the server's resolved entry when online.
+<Callout type="warn">
+**Only the server may write this table.**
 
-`term` here holds the **normalized** form — a lowercased match key, not a display string. Anything joining to this table must normalize first; joining a display-cased `"Serendipity"` silently matches nothing.
+`word.create` accepts a `definition` from the phone, but it saves that text on the user's own `word.definitionOverride`. It never writes `dictionaryEntry`.
 
-AI enrichment (`exampleSentence`, `usageNote`, and `enrichedAt` marking when it last ran) lives on this shared row for the same reason the definition does: it's what holds the spec's cost target that *each unique word triggers at most one AI call across the entire user base*. Enrich once, serve forever. `dictionary.lookup` now writes all three — `enrichedAt` doubling as the claim that keeps concurrent lookups of a new word from buying two enrichments; see [AI enrichment](/docs/ai-enrichment). A per-word example sentence column used to exist alongside it and was removed — one shared row is the whole point, and the fallback chain it created was a branch in two screens for a case nobody had asked for.
+This is the privacy rule the whole product depends on: users share **how often a word was saved**, never **what it means**. If a client could write the shared row, the first person to save a word would define it for every other reader, forever, with no way to fix it. `db:smoke` checks this rule directly.
+</Callout>
 
-`contexts` is a `text[]` of invented sentences with the term brace-marked — `"The house had an {eldritch} stillness about it."` It's an array rather than a table of its own for the same reason `book.authors` is: two or three short strings, always read with the row and never queried individually, so a join would buy nothing. Because it's shared and term-keyed like the definition, the [quiz](/docs/api-layer#wordquiz) built from it costs no AI call of its own — see [AI enrichment](/docs/ai-enrichment#contexts-and-the-cloze-card) for what the braces are doing.
+Because of that rule, `word.dictionaryEntryId` stays null until server code fills it. Each phone answers its own lookups from the offline dictionary, or from the server's shared row when it is online.
 
-`word.definitionOverride` is the other half of that rule. It holds anything the device supplied — the bundled dictionary's wording, or text the user typed themselves — and only that one user ever sees it. Display always reads `word.definitionOverride ?? word.dictionaryEntry?.definition`.
+`term` in this table holds the **normalized** form. It is a match key, not a display string. Any query that joins to this table must normalize first. Joining with `"Serendipity"` matches nothing, and you get no error.
 
-One deliberate simplification: `dictionaryEntry` stores exactly *one* definition per term, even though words often have multiple senses ("bank" the building vs. "bank" the riverside). This table represents "the best known resolution we have," not a full multi-sense dictionary — that's a different concern, handled entirely on-device (see [Offline dictionary](/docs/offline-dictionary)), because the on-device WordNet data is static reference data with no server-side equivalent, while this table's real analog is the on-device `dictionary` table's `cached` rows, which are *also* single-row-per-term. The two designs already agree; it isn't an oversight.
+### The AI columns
+
+`exampleSentence`, `usageNote` and `enrichedAt` live on this shared row, for the same reason the definition does. The cost rule is that **each unique word triggers at most one AI call for the whole user base**. Enrich once, serve forever.
+
+`enrichedAt` has two jobs. It records when enrichment ran, and it acts as a lock. Two lookups of a new word at the same time buy only one enrichment between them. See [AI enrichment](/docs/ai-enrichment).
+
+There used to be a per-word example sentence column as well. It was removed. One shared row is the whole point, and having both created an extra branch in two screens for a case nobody asked for.
+
+### `contexts`
+
+`contexts` is a `text[]` of invented sentences. The term is marked with braces:
+
+```
+"The house had an {eldritch} stillness about it."
+```
+
+It is an array, not its own table, for the same reason `book.authors` is an array. It holds two or three short strings. We always read them with the row, and we never query one alone. A join would buy nothing.
+
+Because these sentences are shared and keyed by term, the [quiz](/docs/api-layer#wordquiz) built from them costs no extra AI call. See [AI enrichment](/docs/ai-enrichment#contexts-and-the-fill-in-the-blank-card) for what the braces do.
+
+### Reading a definition
+
+`word.definitionOverride` is the other half of the privacy rule. It holds the definition the phone showed when the word was saved, usually from its offline dictionary. A reader cannot type or edit one; their own words go in `personalNote`. Only that one user ever sees it.
+
+Screens always read:
+
+```ts
+word.definitionOverride ?? word.dictionaryEntry?.definition
+```
+
+### One definition per term
+
+`dictionaryEntry` stores exactly **one** definition per term, even though many words have several senses ("bank" the building, "bank" the side of a river).
+
+This table means "the best answer we have", not "a full dictionary". Multiple senses are handled on the phone instead (see [Offline dictionary](/docs/offline-dictionary)), because the offline WordNet data is static reference data with no server version.
+
+The real match for this table is the `cached` rows in the phone's own `dictionary` table, and those are also one row per term. So the two designs already agree. This is a decision, not a mistake.
 
 ## Settings: `userPreference`
 
@@ -85,13 +188,22 @@ One deliberate simplification: `dictionaryEntry` stores exactly *one* definition
 userPreference: { userId (PK), contributeToAggregateByDefault, offlineDictionaryTier: "core" | "extended" }
 ```
 
-A 1:1 sidecar table for app settings, kept *separate* from `user` rather than adding columns directly to it — because `user` is generated and migrated by Better Auth, and mixing app-specific settings into a table a third-party library owns is asking for a migration conflict eventually.
+This is a 1:1 side table for app settings. We keep it separate from `user` instead of adding columns to `user`.
 
-`preference.get` and `preference.update` ([API layer](/docs/api-layer#the-preference-router)) are the way in. For a long time this table had a reader and no writer — `word.create` consulted `contributeToAggregateByDefault`, and nothing could change it, so the opt-out below was unreachable in practice.
+The reason: Better Auth owns and migrates the `user` table. If we add our own columns there, one of its future migrations will eventually conflict with ours.
 
-The default values live in `@better-vocab/domain` as `PREFERENCE_DEFAULTS`, and are applied in two places from that one definition: as the Postgres column defaults, and as what `preference.get` returns for a user who has no row yet. Reading preferences therefore never creates a row.
+`preference.get` and `preference.update` ([API layer](/docs/api-layer#the-preference-router)) are the only way in.
 
-A `pushToken` table used to sit here for the weekly digest. It was deleted: there is no push-sending code anywhere in the repo, and registering Expo tokens is a few minutes of work whenever the digest actually gets built. Same principle as `book.raw` above — schema with no producer is a liability, not a head start.
+For a long time this table had a reader and no writer. `word.create` read `contributeToAggregateByDefault`, but nothing could change it. So the opt-out was impossible to use in practice.
+
+The default values live in `@better-vocab/domain` as `PREFERENCE_DEFAULTS`. That one definition is used in two places:
+
+1. as the Postgres column defaults
+2. as what `preference.get` returns for a user with no row yet
+
+So reading preferences never creates a row.
+
+There used to be a `pushToken` table here, for a weekly digest email. It was deleted. No code anywhere sends a push notification, and registering Expo tokens takes a few minutes whenever the digest is really built. Same rule as `book.raw`: a table that nothing writes to is a cost, not a head start.
 
 ## How it all connects
 
@@ -103,17 +215,17 @@ user ──┬── folder ──── book
        └── userPreference (1:1)
 ```
 
-## Worked example: logging a word
+## Example: saving one word
 
-Walking through what `word.create` actually does when a user in the "Dune" folder adds the word "ornithopter" (see [API layer](/docs/api-layer) for the procedure itself):
+A user has a "Dune" folder. They save the word "ornithopter". Here is what `word.create` does (see [API layer](/docs/api-layer) for the procedure itself):
 
-1. Confirm the "Dune" folder belongs to this user, and grab its `bookId` while already fetching that row.
+1. Check that the "Dune" folder belongs to this user. Read its `bookId` from the same row, while we are already there.
 2. Normalize the term to `"ornithopter"`.
-3. Check `dictionaryEntry` for an existing `"ornithopter"` row — **read only**. Someone else has likely already looked this word up, so link to that shared row if it exists. If it doesn't, any definition that came with the request is stored on *this user's* `definitionOverride` instead. Capture never writes the shared table; only `dictionary.lookup` does. A client that could write it would let the first person to capture a term define it permanently for every other reader.
-4. Look up this user's `userPreference` to snapshot their current aggregate opt-in setting — falling back to `PREFERENCE_DEFAULTS` if they have never saved one.
-5. Insert the `word` row — `userId`, `folderId`, `bookId` (all three, even though two are technically derivable), the term, the resolved `dictionaryEntryId` (or `null` if still pending), and the snapshotted preference. If this exact `(folderId, normalizedTerm)` already exists, the insert quietly no-ops and the existing row is returned instead.
+3. Look for an existing `"ornithopter"` row in `dictionaryEntry`. This step is **read only**. Someone else has probably looked this word up already, so we link to the shared row if it exists. If it does not exist, any definition sent with the request is stored on **this user's** `definitionOverride`. Saving a word never writes the shared table. Only `dictionary.lookup` does.
+4. Read this user's `userPreference` and snapshot their aggregate opt-in setting. If they have no row, use `PREFERENCE_DEFAULTS`.
+5. Insert the `word` row: `userId`, `folderId`, `bookId`, the term, the `dictionaryEntryId` (or null), and the snapshot. If a row with this `(folderId, normalizedTerm)` already exists, the insert does nothing and we return the existing row.
 
-The crowdsourced view for "Dune" later runs, roughly:
+Later, the crowdsourced view for "Dune" runs a query like this:
 
 ```sql
 SELECT normalized_term, COUNT(DISTINCT user_id)
@@ -123,6 +235,16 @@ GROUP BY normalized_term
 ORDER BY count DESC;
 ```
 
-— which is exactly the query the `bookId` denormalization and its index exist to make fast. There is deliberately **no** materialized `book_word_aggregate` counter table; one existed and was deleted. A counter counts *captures*, so one user with the word in ten folders would read as ten readers, and keeping it accurate means getting increment-on-create, decrement-on-delete, opt-out flips, and folder cascades right in four separate places. `COUNT(DISTINCT user_id)` is both smaller and more correct. Add a counter back only when this query shows up in slow logs.
+This is the query that the `bookId` copy and its index exist for.
 
-It is also computed live rather than cached: a cached/stale version of this list risks showing outdated (and potentially spoiler-revealing) results if it's ever served while offline. That query is `word.suggestions` ([API layer](/docs/api-layer#wordsuggestions)), which adds two exclusions to the shape above — your own captures, and anything already in the folder you're looking at — and returns counts with no definition text at all.
+<Callout>
+There is deliberately **no** `book_word_aggregate` counter table. One existed, and it was deleted.
+
+A counter counts captures, not people. One user with the same word in ten folders would look like ten readers. Keeping a counter correct also means getting four separate paths right: increment on create, decrement on delete, opt-out changes, and folder cascades.
+
+`COUNT(DISTINCT user_id)` is smaller code and a more correct answer. Add a counter back only when this query appears in slow query logs.
+</Callout>
+
+The list is also computed fresh every time, never cached. A stale cached list could show old results, and old results can contain spoilers.
+
+That query is `word.suggestions` ([API layer](/docs/api-layer#wordsuggestions)). It adds two filters to the shape above: it removes your own words, and it removes words already in the folder you are viewing. It returns counts only, with no definition text.

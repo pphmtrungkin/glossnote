@@ -28,12 +28,14 @@ export const word = pgTable(
     normalizedTerm: text("normalized_term").notNull(),
     // Null while "pending definition" (offline, not yet resolved).
     dictionaryEntryId: text("dictionary_entry_id").references(() => dictionaryEntry.id, { onDelete: "set null" }),
-    // Personal edit that overrides the shared dictionaryEntry.definition for
-    // this user's copy, without mutating the shared cache other users read.
+    // The definition this user's device showed at capture, kept only when no
+    // shared dictionaryEntry existed yet (an offline capture). Written once by
+    // word.create and never edited — definitions are not user-editable — and it
+    // never touches the shared cache other users read.
     definitionOverride: text("definition_override"),
     // SoftwareSpec §4.1 `personal_note`. Free-form user annotation, distinct
-    // from definitionOverride: that one replaces the definition, this one sits
-    // alongside it. Never contributes to the aggregate — it's private by
+    // from definitionOverride: that one stands in for a missing shared
+    // definition, this one is the reader's own words alongside it. Never contributes to the aggregate — it's private by
     // construction and would leak reading context if surfaced.
     personalNote: text("personal_note"),
     captureMethod: captureMethodEnum("capture_method").notNull(),

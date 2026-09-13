@@ -5,6 +5,7 @@ import { Spinner, useThemeColor, useToast } from "heroui-native";
 import { Alert, Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
+import { useCaptureWord } from "@/hooks/use-capture-word";
 import { useDefinition } from "@/hooks/use-definition";
 import { useFolders } from "@/hooks/use-folders";
 import { MASTERY_CLASS, masteryOf } from "@/lib/mastery";
@@ -114,9 +115,18 @@ export default function FolderScreen() {
   const deleteWord = useMutation(
     trpc.word.delete.mutationOptions({ onSuccess: invalidateWords, onError: showError }),
   );
-  const addWord = useMutation(
-    trpc.word.create.mutationOptions({ onSuccess: invalidateWords, onError: showError }),
-  );
+  // Adding a suggested word goes through the same offline-aware capture path
+  // as the add-word form, so a shelf tapped on a train queues like any other.
+  const addWord = useCaptureWord({
+    onSettled: (outcome) => {
+      if (outcome.status === "queued") {
+        toast.show({ label: "Saved on this device — it will sync when you're back online." });
+        return;
+      }
+      return invalidateWords();
+    },
+    onError: showError,
+  });
 
   function confirmDelete(wordId: string, term: string) {
     Alert.alert("Delete word?", `"${term}" will be removed from this shelf.`, [

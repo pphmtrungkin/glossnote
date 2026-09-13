@@ -6,21 +6,26 @@ import {
   SourceSerif4_600SemiBold,
   SourceSerif4_700Bold,
 } from "@expo-google-fonts/source-serif-4";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { SQLiteProvider, type SQLiteDatabase } from "expo-sqlite";
-import { HeroUINativeProvider, Spinner, useThemeColor } from "heroui-native";
+import { StatusBar } from "expo-status-bar";
+import { SQLiteProvider, useSQLiteContext, type SQLiteDatabase } from "expo-sqlite";
+import * as SystemUI from "expo-system-ui";
+import { HeroUINativeProvider, Spinner } from "heroui-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { AppThemeProvider, useAppTheme } from "@/contexts/app-theme-context";
+import { usePendingSync } from "@/hooks/use-pending-sync";
 import { authClient } from "@/lib/auth-client";
 import { installBundledCore } from "@/lib/dictionary-pack";
+import { usePalette } from "@/lib/palette";
 import { LOCAL_DB_NAME, migrateLocalDb } from "@/lib/local-db";
+import { ONBOARDING_QUERY_KEY, hasSeenOnboarding } from "@/lib/onboarding";
 import { queryClient } from "@/utils/trpc";
 
 // Held until the reading font is registered and the stored page colour has
@@ -29,13 +34,41 @@ SplashScreen.preventAutoHideAsync();
 
 function StackLayout() {
   const { data: session, isPending } = authClient.useSession();
-  const themeColorForeground = useThemeColor("foreground");
-  const themeColorBackground = useThemeColor("background");
+  const db = useSQLiteContext();
+  const { isDark } = useAppTheme();
+
+  // Per install, not per account — see lib/onboarding.ts. Read here rather than
+  // inside the tour so the tabs are never mounted first and then replaced, and
+  // invalidated by `useFinishOnboarding` so ending the tour flips the guard.
+  const onboarding = useQuery({
+    queryKey: ONBOARDING_QUERY_KEY,
+    queryFn: () => hasSeenOnboarding(db),
+  });
+  // Chrome colours come from the palette module rather than from HeroUI
+  // directly — it is the one place the app spells a colour that no className
+  // can reach, and the window background below is exactly that case.
+  const palette = usePalette();
+
+  // Android is edge-to-edge, so the status bar is transparent and whatever is
+  // behind it shows through. `react-native-screens` lays each screen out below
+  // the bar, which leaves the window background itself on show there — and that
+  // is expo-splash-screen's colour, not the reader's page. Repainting it is the
+  // only thing that reaches the strip; an overlay View loses to the elevated
+  // native stack. iOS shares it harmlessly: the window is covered there anyway.
+  useEffect(() => {
+    SystemUI.setBackgroundColorAsync(palette.base);
+  }, [palette.base]);
+
+  // Words captured offline are flushed from here rather than from a screen:
+  // the queue belongs to the session, not to whichever shelf happens to be
+  // open. Gated on the session because the flush is a protected procedure.
+  usePendingSync(!!session?.user);
 
   // The session comes from SecureStore, so it isn't available on the first
   // render. Rendering the stack before it resolves would flash the sign-in
-  // screen at every cold start for an already-signed-in user.
-  if (isPending) {
+  // screen at every cold start for an already-signed-in user. The device flag
+  // is waited on for the same reason, one screen further in.
+  if (isPending || onboarding.isPending) {
     return (
       <View className="flex-1 items-center justify-center bg-background">
         <Spinner />
@@ -44,32 +77,48 @@ function StackLayout() {
   }
 
   const isSignedIn = !!session?.user;
+  // A failed read (no table yet on a half-migrated device) is treated as seen:
+  // a reader who can't be shown the tour should land on their shelf, not on a
+  // spinner. `hasSeenOnboarding` already swallows its own errors.
+  const needsOnboarding = isSignedIn && onboarding.data === false;
 
   return (
-    <Stack
-      screenOptions={{
-        headerTintColor: themeColorForeground,
-        headerStyle: { backgroundColor: themeColorBackground },
-        headerTitleStyle: { fontFamily: "SourceSerif4_600SemiBold", color: themeColorForeground },
-        contentStyle: { backgroundColor: themeColorBackground },
-      }}
-    >
-      <Stack.Protected guard={!isSignedIn}>
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      </Stack.Protected>
+    <>
+      <Stack
+        screenOptions={{
+          headerTintColor: palette.ink,
+          headerStyle: { backgroundColor: palette.base },
+          headerTitleStyle: { fontFamily: "SourceSerif4_600SemiBold", color: palette.ink },
+          contentStyle: { backgroundColor: palette.base },
+        }}
+      >
+        <Stack.Protected guard={!isSignedIn}>
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+        </Stack.Protected>
 
-      <Stack.Protected guard={isSignedIn}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="folder/[id]" options={{ title: "Shelf" }} />
-        <Stack.Screen name="word/[id]" options={{ title: "Word" }} />
-        <Stack.Screen name="add-word" options={{ title: "Add word", presentation: "modal" }} />
-        {/* The review run owns the whole screen — its own close button and
-            progress rail are the chrome, so the stack header would duplicate
-            them. */}
-        <Stack.Screen name="review" options={{ headerShown: false }} />
-        <Stack.Screen name="settings" options={{ title: "Settings" }} />
-      </Stack.Protected>
-    </Stack>
+        {/* The tour sits between the account and the app: signed in, but this
+            phone hasn't seen it. Its own stack, so the tabs aren't mounted
+            behind it and the back gesture has nowhere to go. */}
+        <Stack.Protected guard={needsOnboarding}>
+          <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        </Stack.Protected>
+
+        <Stack.Protected guard={isSignedIn && !needsOnboarding}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="folder/[id]" options={{ title: "Shelf" }} />
+          <Stack.Screen name="word/[id]" options={{ title: "Word" }} />
+          <Stack.Screen name="add-word" options={{ title: "Add word", presentation: "modal" }} />
+          {/* The review run owns the whole screen — its own close button and
+              progress rail are the chrome, so the stack header would duplicate
+              them. */}
+          <Stack.Screen name="review" options={{ headerShown: false }} />
+          <Stack.Screen name="settings" options={{ title: "Settings" }} />
+        </Stack.Protected>
+      </Stack>
+
+      {/* The icons on top of it follow the reader's page, not the OS scheme. */}
+      <StatusBar style={isDark ? "light" : "dark"} />
+    </>
   );
 }
 

@@ -5,8 +5,9 @@ import { TRPCError } from "@trpc/server";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
-import { enrichDefinition } from "../enrich";
+import { defineTerm, enrichDefinition } from "../enrich";
 import { protectedProcedure, router } from "../index";
+import { rateLimit } from "../rate-limit";
 
 const DATAMUSE_ENDPOINT = "https://api.datamuse.com/words";
 
@@ -97,6 +98,112 @@ async function enrichOnce(entry: DictionaryEntry): Promise<DictionaryEntry> {
   return enriched ?? entry;
 }
 
+/** Datamuse's definition for a term, or null. Throws when Datamuse can't be reached. */
+async function fetchDatamuseDefinition(normalizedTerm: string): Promise<string | null> {
+  let payload: unknown;
+  try {
+    const url = new URL(DATAMUSE_ENDPOINT);
+    url.searchParams.set("sp", normalizedTerm);
+    url.searchParams.set("md", "d");
+    // More than one, because the exact match is not always ranked first
+    // once the fuzzy matcher is involved.
+    url.searchParams.set("max", "5");
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(DATAMUSE_TIMEOUT_MS) });
+    if (!response.ok) {
+      throw new TRPCError({
+        code: "BAD_GATEWAY",
+        message: `Dictionary lookup failed (${response.status} ${response.statusText}).`,
+      });
+    }
+    payload = await response.json();
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    // Timeout or network failure. The app already has an offline answer to
+    // fall back on, so this is a soft failure, not a broken screen.
+    throw new TRPCError({ code: "BAD_GATEWAY", message: "Dictionary lookup timed out." });
+  }
+
+  return pickDefinition(payload, normalizedTerm);
+}
+
+/**
+ * Inserts a new shared row. onConflictDoNothing covers two requests racing on
+ * the same brand-new term; the loser re-reads the winner's row.
+ */
+async function insertEntry(values: typeof dictionaryEntry.$inferInsert): Promise<DictionaryEntry | null> {
+  const [inserted] = await db
+    .insert(dictionaryEntry)
+    .values(values)
+    .onConflictDoNothing({ target: dictionaryEntry.term })
+    .returning();
+  return (
+    inserted ?? (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, values.term) })) ?? null
+  );
+}
+
+// A brand-new term has no row yet, so `enrichedAt` has nothing to claim. These
+// two stand in for it until the row exists: concurrent lookups of one cold word
+// share a single resolution, and a word nobody can define ("gom jabbar")
+// doesn't cost a Datamuse request and a model call on every lookup.
+//
+// ponytail: per-process memory. A second API instance can spend its own call
+// on the same cold word, and a restart forgets the unknown words; move both
+// into Postgres if the API ever runs more than one instance.
+const inFlight = new Map<string, Promise<DictionaryEntry | null>>();
+const unknownTerms = new Set<string>();
+const UNKNOWN_TERMS_LIMIT = 10_000;
+
+function rememberUnknown(normalizedTerm: string): null {
+  if (unknownTerms.size >= UNKNOWN_TERMS_LIMIT) unknownTerms.clear();
+  unknownTerms.add(normalizedTerm);
+  return null;
+}
+
+/**
+ * Resolves a term with no shared row. Datamuse decides WHETHER it is a word;
+ * the model writes WHAT it means.
+ *
+ * Datamuse goes first as a gate, not as a source. Told to leave words invented
+ * for a book blank, Gemini still defined "sietch" from Dune on every call at
+ * temperature 0 — and its own usage note called the word invented. Datamuse
+ * has never heard of it, so a word Datamuse doesn't know is never sent to the
+ * model. The reverse does not hold: Datamuse's sources include fiction
+ * ("horcrux"), so a word the model calls unknown is trusted rather than filled
+ * in from Datamuse.
+ *
+ * The AI path writes definition, contexts and usage note in one call and
+ * inserts the row already enriched. When that call fails, Datamuse's own
+ * definition is saved and enriched afterwards, so AI stays optional.
+ */
+async function resolveNewTerm(normalizedTerm: string): Promise<DictionaryEntry | null> {
+  // Re-read inside the in-flight slot: a request that missed the cache just
+  // before another one inserted the row would otherwise start a second call.
+  const existing = await db.query.dictionaryEntry.findFirst({
+    where: eq(dictionaryEntry.term, normalizedTerm),
+  });
+  if (existing) return enrichOnce(existing);
+
+  // Throws when Datamuse can't be reached. Skipping the gate would leave the
+  // model as the only spoiler guard, so the lookup fails instead and the app
+  // answers from the device dictionary.
+  const datamuseDefinition = await fetchDatamuseDefinition(normalizedTerm);
+  if (!datamuseDefinition) return rememberUnknown(normalizedTerm);
+
+  const defined = await defineTerm(normalizedTerm);
+  if (defined === "unknown") return rememberUnknown(normalizedTerm);
+  if (defined) {
+    return insertEntry({ term: normalizedTerm, ...defined, source: "ai_enhanced", enrichedAt: new Date() });
+  }
+
+  // ponytail: an AI outage saves Datamuse's wording, which for a fiction term
+  // Datamuse knows ("horcrux") is the book's meaning. Rare, since it needs a
+  // failed call on a fiction word's first lookup; return null here instead if
+  // that ever matters more than keeping lookups working through an outage.
+  const entry = await insertEntry({ term: normalizedTerm, definition: datamuseDefinition, source: "dictionary_api" });
+  return entry ? enrichOnce(entry) : null;
+}
+
 export const dictionaryRouter = router({
   /**
    * Resolves one term to a definition, and caches the result.
@@ -111,63 +218,29 @@ export const dictionaryRouter = router({
    * app, not an error.
    */
   lookup: protectedProcedure
+    // A cold term costs a Datamuse request (100k a day) and at most one AI
+    // call. A reader looks up a word every few minutes; this only stops a
+    // client stuck in a loop.
+    .use(rateLimit({ name: "dictionary.lookup", max: 60, windowSeconds: 60 }))
     .input(z.object({ term: z.string().trim().min(1) }))
     .query(async ({ input }) => {
       const normalizedTerm = normalizeTerm(input.term);
 
-      // 1. Shared cache first — every later reader of this term is free, which
-      //    is what keeps both the Datamuse quota and (later) AI cost flat.
+      // Shared cache first — every later reader of this term is free, which is
+      // what keeps both the Datamuse quota and AI cost flat. An already-enriched
+      // row returns straight out of enrichOnce, so the warm path stays a single
+      // read; a row cached before enrichment existed picks it up here.
       const cached = await db.query.dictionaryEntry.findFirst({
         where: eq(dictionaryEntry.term, normalizedTerm),
       });
-      // An already-enriched row returns straight out of enrichOnce, so the
-      // warm path stays a single read. A row cached before enrichment existed
-      // (or by the seed) picks it up here on its next lookup.
       if (cached) return enrichOnce(cached);
+      if (unknownTerms.has(normalizedTerm)) return null;
 
-      // 2. Miss: ask Datamuse.
-      let payload: unknown;
-      try {
-        const url = new URL(DATAMUSE_ENDPOINT);
-        url.searchParams.set("sp", normalizedTerm);
-        url.searchParams.set("md", "d");
-        // More than one, because the exact match is not always ranked first
-        // once the fuzzy matcher is involved.
-        url.searchParams.set("max", "5");
-
-        const response = await fetch(url, { signal: AbortSignal.timeout(DATAMUSE_TIMEOUT_MS) });
-        if (!response.ok) {
-          throw new TRPCError({
-            code: "BAD_GATEWAY",
-            message: `Dictionary lookup failed (${response.status} ${response.statusText}).`,
-          });
-        }
-        payload = await response.json();
-      } catch (error) {
-        if (error instanceof TRPCError) throw error;
-        // Timeout or network failure. The app already has an offline answer to
-        // fall back on, so this is a soft failure, not a broken screen.
-        throw new TRPCError({ code: "BAD_GATEWAY", message: "Dictionary lookup timed out." });
+      let pending = inFlight.get(normalizedTerm);
+      if (!pending) {
+        pending = resolveNewTerm(normalizedTerm).finally(() => inFlight.delete(normalizedTerm));
+        inFlight.set(normalizedTerm, pending);
       }
-
-      const definition = pickDefinition(payload, normalizedTerm);
-      if (!definition) return null;
-
-      // 3. Cache it. onConflictDoNothing covers two requests racing on the same
-      //    brand-new term; the loser re-reads the winner's row.
-      const [inserted] = await db
-        .insert(dictionaryEntry)
-        .values({ term: normalizedTerm, definition, source: "dictionary_api" })
-        .onConflictDoNothing({ target: dictionaryEntry.term })
-        .returning();
-
-      const entry =
-        inserted ??
-        (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, normalizedTerm) }));
-
-      // 4. Enrich it, once ever. Step 2 already cost a round trip, so the
-      //    reader is waiting either way; every later lookup of this term skips
-      //    both (§8.3).
-      return entry ? enrichOnce(entry) : null;
+      return pending;
     }),
 });

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
+import { WordUsage } from "@/components/word-usage";
 import { useFolders } from "@/hooks/use-folders";
 import { masteryOf } from "@/lib/mastery";
 import { trpc } from "@/utils/trpc";
@@ -106,17 +107,15 @@ export default function WordScreen() {
         )}
       </View>
 
-      {/* The AI columns' first reader on this screen: `dictionary.lookup` has
-          been writing both since enrichment landed. Both are on the shared
-          term-keyed row, so they're the same for every reader of this word. */}
-      {entry?.exampleSentence ? (
-        <Text className="mt-5 border-l-2 border-primary-soft pl-4 font-italic text-[15.5px] leading-[25px] text-foreground">
-          {entry.exampleSentence}
-        </Text>
-      ) : null}
-
-      {entry?.usageNote ? (
-        <Text className="mt-4 text-[13.5px] leading-[21px] text-muted">{entry.usageNote}</Text>
+      {/* ---- How it's used --------------------------------------------------- */}
+      {/* Every AI sentence and the usage note, from the shared term-keyed row,
+          so they're the same for every reader of this word. */}
+      {entry ? (
+        <WordUsage
+          contexts={entry.contexts}
+          exampleSentence={entry.exampleSentence}
+          usageNote={entry.usageNote}
+        />
       ) : null}
 
       {/* ---- Two facts the row actually carries ----------------------------- */}

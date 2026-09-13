@@ -7,11 +7,9 @@ import { Container } from "@/components/container";
 /**
  * The welcome page — the first thing a signed-out reader sees.
  *
- * Both buttons lead to the same place: `sign-in` already renders a sign-in and
- * a sign-up form together, so there is nothing to branch on. They are still two
- * buttons because the design asks a returning reader a different question than
- * a new one, and answering "I already have an account" with the same screen is
- * fine — answering it with a *dead* button would not be.
+ * The two buttons lead to the design's two auth screens, which swap into each
+ * other by `replace` — so the answer to "I already have an account" is one tap
+ * either way round, and the back stack never grows a chain of them.
  *
  * No "seen once" flag: signed-out is the condition this screen renders on, and
  * a reader who signs out has genuinely returned to the front door. Persisting a
@@ -19,32 +17,35 @@ import { Container } from "@/components/container";
  */
 export default function WelcomeScreen() {
   return (
-    <Container isScrollable={false} className="px-8 pt-16 pb-12">
-      {/* The wordmark sits at the top of the page while the rest of the content
-          hangs off the bottom, which is what `justify-between` buys — the two
-          children are the only things it has to space apart. */}
+    <Container isScrollable={false} hasTopInset className="px-8 pt-16 pb-10">
+      {/* Every screen in this group has the same skeleton: the wordmark pinned
+          to the top, the rest hanging off the bottom, `gap-8` between blocks
+          and `gap-4` inside one. Spacing is set here and never per-element, so
+          the three pages can't drift apart a pixel at a time. */}
       <View className="flex-1 justify-between">
         <Text className="font-serif-semibold text-[12px] uppercase tracking-[2.2px] text-primary">
           GlossNote
         </Text>
 
-        <View>
-          {/* The design sets this as three misregistered CMYK plates — a print
-            treatment built from mix-blend-mode, SVG filters and cyan/magenta
-            inks. None of those exist in React Native, and the inks are the
-            colours this app deliberately doesn't use, so the headline is set
-            plainly in the reading face. */}
-          <Text className="mb-5 font-serif-semibold text-[46px] leading-[47px] tracking-[-0.9px] text-foreground">
-            Read on.{"\n"}I'll keep{"\n"}the words.
-          </Text>
+        <View className="gap-8">
+          <View className="gap-4">
+            {/* The design sets this as three misregistered CMYK plates — a print
+              treatment built from mix-blend-mode, SVG filters and cyan/magenta
+              inks. None of those exist in React Native, and the inks are the
+              colours this app deliberately doesn't use, so the headline is set
+              plainly in the reading face. */}
+            <Text className="font-serif-semibold text-[46px] leading-[47px] tracking-[-0.9px] text-foreground">
+              Read on.{"\n"}I'll keep{"\n"}the words.
+            </Text>
 
-          <Text className="mb-8 max-w-[280px] text-[16px] leading-[26px] text-muted">
-            Say a word out loud or type it. We'll tell you what it means — then
-            it files itself onto the book's shelf.
-          </Text>
+            <Text className="max-w-[280px] text-[16px] leading-[26px] text-muted">
+              Say a word out loud or type it. We'll tell you what it means —
+              then it files itself onto the book's shelf.
+            </Text>
+          </View>
 
           <View className="gap-2.5">
-            <Button size="lg" onPress={() => router.push("/sign-in")}>
+            <Button size="lg" onPress={() => router.push("/sign-up")}>
               Begin
             </Button>
             <Button variant="ghost" onPress={() => router.push("/sign-in")}>

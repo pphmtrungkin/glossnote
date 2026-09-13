@@ -83,7 +83,7 @@ export default function ReviewScreen() {
   const answered = Math.min(index, order.length);
 
   return (
-    <Container isScrollable={false} className="px-6 pt-4 pb-5">
+    <Container isScrollable={false} hasTopInset className="px-6 pt-4 pb-5">
       {/* ---- Progress rail ------------------------------------------------ */}
       <View className="mb-8 flex-row items-center gap-3.5">
         <Pressable

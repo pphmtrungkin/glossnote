@@ -60,7 +60,7 @@
       --field-background: #f4f3f0;
       --field-foreground: var(--foreground);
       --field-placeholder: #6b6a66; /* muted */
-      --field-border: transparent;
+      --field-border: var(--separator);
 
       --success: #4f7a4a;
       --success-foreground: #ffffff;
@@ -123,7 +123,7 @@
       --field-background: #ffffff;
       --field-foreground: var(--foreground);
       --field-placeholder: #9a948c;
-      --field-border: transparent;
+      --field-border: var(--separator);
 
       --success: #2f7d51;
       --success-foreground: #ffffff;
@@ -186,7 +186,7 @@
       --field-background: #fcf5e4;
       --field-foreground: var(--foreground);
       --field-placeholder: #a2916e;
-      --field-border: transparent;
+      --field-border: var(--separator);
 
       --success: #4f7a3a;
       --success-foreground: #fff8ea;
@@ -249,7 +249,7 @@
       --field-background: #e3eddc;
       --field-foreground: var(--foreground);
       --field-placeholder: #79886f;
-      --field-border: transparent;
+      --field-border: var(--separator);
 
       --success: #35703c;
       --success-foreground: #f2f7ef;
@@ -317,7 +317,7 @@
       --field-background: #24211b;
       --field-foreground: var(--foreground);
       --field-placeholder: #9a958c;
-      --field-border: transparent;
+      --field-border: var(--separator);
 
       --success: #84ad7e;
       --success-foreground: #191713;
@@ -360,6 +360,21 @@
  * They are the scheme's own vocabulary — the pressed/tinted variants of the
  * accent, and the three mastery states.
  */
+/*
+ * HeroUI ships form fields borderless (`--field-border-width: 0px`), which on
+ * these pages leaves an input invisible: `--field-background` is the page
+ * colour in most of the themes, so without an edge there is nothing to see.
+ * One hairline, and each theme points `--field-border` at its own separator.
+ */
+@theme {
+  --field-border-width: 1px;
+
+  /* Paper, not plastic: the same corner the cards use. HeroUI's own field
+     radius is 14px, which is the one rounded thing on an otherwise square
+     page. */
+  --field-radius: 2px;
+}
+
 @theme {
   --color-base: var(--background);
   --color-ink: var(--foreground);

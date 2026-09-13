@@ -1,19 +1,12 @@
 import { useForm } from "@tanstack/react-form";
-import {
-  Button,
-  FieldError,
-  Input,
-  Label,
-  Spinner,
-  Surface,
-  TextField,
-  useToast,
-} from "heroui-native";
+import { Button, Spinner, useToast } from "heroui-native";
 import { useRef } from "react";
-import { Text, TextInput, View } from "react-native";
+import { TextInput, View } from "react-native";
 import z from "zod";
 
+import { TextField } from "@/components/text-field";
 import { authClient } from "@/lib/auth-client";
+import { getFormErrorMessage } from "@/lib/form-error";
 import { queryClient } from "@/utils/trpc";
 
 const signInSchema = z.object({
@@ -21,33 +14,15 @@ const signInSchema = z.object({
   password: z.string().min(1, "Password is required").min(8, "Use at least 8 characters"),
 });
 
-function getErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (Array.isArray(error)) {
-    for (const issue of error) {
-      const message = getErrorMessage(issue);
-      if (message) {
-        return message;
-      }
-    }
-    return null;
-  }
-
-  if (typeof error === "object" && error !== null) {
-    const maybeError = error as { message?: unknown };
-    if (typeof maybeError.message === "string") {
-      return maybeError.message;
-    }
-  }
-
-  return null;
-}
-
+/**
+ * The fields and the submit button of the design's `signin` screen — the page
+ * around them (wordmark, headline, the link across to sign-up) belongs to the
+ * route, so the same form can't drift between two chromes.
+ *
+ * Errors are rendered per field rather than once above the form: TanStack buckets
+ * a schema's issues by field path, so `field.state.meta.errors` already holds the
+ * message that belongs to that input.
+ */
 function SignIn() {
   const passwordInputRef = useRef<TextInput>(null);
   const { toast } = useToast();
@@ -75,10 +50,6 @@ function SignIn() {
           },
           onSuccess() {
             formApi.reset();
-            toast.show({
-              variant: "success",
-              label: "Signed in successfully",
-            });
             queryClient.refetchQueries();
           },
         },
@@ -87,81 +58,60 @@ function SignIn() {
   });
 
   return (
-    <Surface variant="secondary" className="p-4 rounded-lg">
-      <Text className="text-foreground font-medium mb-4">Sign In</Text>
+    <View className="gap-4">
+      <form.Field name="email">
+        {(field) => (
+          <TextField
+            label="Email"
+            error={getFormErrorMessage(field.state.meta.errors)}
+            value={field.state.value}
+            onBlur={field.handleBlur}
+            onChangeText={field.handleChange}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            textContentType="emailAddress"
+            returnKeyType="next"
+            blurOnSubmit={false}
+            onSubmitEditing={() => {
+              passwordInputRef.current?.focus();
+            }}
+          />
+        )}
+      </form.Field>
 
-      <form.Subscribe
-        selector={(state) => ({
-          isSubmitting: state.isSubmitting,
-          validationError: getErrorMessage(state.errorMap.onSubmit),
-        })}
-      >
-        {({ isSubmitting, validationError }) => {
-          const formError = validationError;
+      <form.Field name="password">
+        {(field) => (
+          <TextField
+            ref={passwordInputRef}
+            label="Password"
+            error={getFormErrorMessage(field.state.meta.errors)}
+            value={field.state.value}
+            onBlur={field.handleBlur}
+            onChangeText={field.handleChange}
+            placeholder="••••••••"
+            secureTextEntry
+            autoComplete="password"
+            textContentType="password"
+            returnKeyType="go"
+            onSubmitEditing={form.handleSubmit}
+          />
+        )}
+      </form.Field>
 
-          return (
-            <>
-              <FieldError isInvalid={!!formError} className="mb-3">
-                {formError}
-              </FieldError>
-
-              <View className="gap-3">
-                <form.Field name="email">
-                  {(field) => (
-                    <TextField>
-                      <Label>Email</Label>
-                      <Input
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChangeText={field.handleChange}
-                        placeholder="email@example.com"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoComplete="email"
-                        textContentType="emailAddress"
-                        returnKeyType="next"
-                        blurOnSubmit={false}
-                        onSubmitEditing={() => {
-                          passwordInputRef.current?.focus();
-                        }}
-                      />
-                    </TextField>
-                  )}
-                </form.Field>
-
-                <form.Field name="password">
-                  {(field) => (
-                    <TextField>
-                      <Label>Password</Label>
-                      <Input
-                        ref={passwordInputRef}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChangeText={field.handleChange}
-                        placeholder="••••••••"
-                        secureTextEntry
-                        autoComplete="password"
-                        textContentType="password"
-                        returnKeyType="go"
-                        onSubmitEditing={form.handleSubmit}
-                      />
-                    </TextField>
-                  )}
-                </form.Field>
-
-                <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-                  {isSubmitting ? (
-                    <Spinner size="sm" color="default" />
-                  ) : (
-                    <Button.Label>Sign In</Button.Label>
-                  )}
-                </Button>
-              </View>
-            </>
-          );
-        }}
+      <form.Subscribe selector={(state) => state.isSubmitting}>
+        {(isSubmitting) => (
+          <Button size="lg" onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-2">
+            {isSubmitting ? (
+              <Spinner size="sm" color="default" />
+            ) : (
+              <Button.Label>Sign in</Button.Label>
+            )}
+          </Button>
+        )}
       </form.Subscribe>
-    </Surface>
+    </View>
   );
 }
 
