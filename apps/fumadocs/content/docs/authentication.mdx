@@ -102,4 +102,4 @@ That is a real benefit of [not storing the aggregate](/docs/data-model#example-s
 - Magic link sign-in.
 - OAuth (Google, Apple, and so on).
 - **Changing an email.** Better Auth's `changeEmail` sends a verification mail to the new address and cannot finish without it. That is the same blocker as delete-account verification. Changing a **password** already works (`authClient.changePassword`), but it has no screen.
-- **Delete account has no screen.** `apps/native/app/settings.tsx` calls `authClient.signOut()` only. See [Implementation status](/docs/implementation-status).
+- **Delete account has no screen.** `apps/native/app/(tabs)/you.tsx` calls `authClient.signOut()` only. See [Implementation status](/docs/implementation-status).

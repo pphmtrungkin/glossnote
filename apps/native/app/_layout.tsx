@@ -32,6 +32,12 @@ import { queryClient } from "@/utils/trpc";
 // been replayed, so the first painted frame is already the right theme.
 SplashScreen.preventAutoHideAsync();
 
+/**
+ * The longest a cold start waits on the server's session answer when the phone
+ * has no saved session to open with. See StackLayout.
+ */
+const SESSION_WAIT_MS = 4000;
+
 function StackLayout() {
   const { data: session, isPending } = authClient.useSession();
   const db = useSQLiteContext();
@@ -64,11 +70,25 @@ function StackLayout() {
   // open. Gated on the session because the flush is a protected procedure.
   usePendingSync(!!session?.user);
 
-  // The session comes from SecureStore, so it isn't available on the first
-  // render. Rendering the stack before it resolves would flash the sign-in
-  // screen at every cold start for an already-signed-in user. The device flag
-  // is waited on for the same reason, one screen further in.
-  if (isPending || onboarding.isPending) {
+  // With no session known yet, rendering the stack would flash the sign-in
+  // screen at every cold start for an already-signed-in user, so startup waits
+  // — but never on the network alone. `isPending` stays true until
+  // `get-session` answers, while Better Auth's Expo client restores the last
+  // session from SecureStore into `data` well before that; and a server that
+  // can't be reached (a changed dev IP, no signal) can hold that request open
+  // for a minute. So a restored session opens the app at once, and with none
+  // the wait is capped: the stack renders signed out, and flips to the shelf
+  // if the answer still arrives. Offline mode must never feel broken.
+  const [hasWaitedForSession, setHasWaitedForSession] = useState(false);
+  useEffect(() => {
+    const timeout = setTimeout(() => setHasWaitedForSession(true), SESSION_WAIT_MS);
+    return () => clearTimeout(timeout);
+  }, []);
+  const isWaitingForSession = isPending && !session && !hasWaitedForSession;
+
+  // The device flag is a local SQLite read, waited on for the same reason as
+  // the session, one screen further in.
+  if (isWaitingForSession || onboarding.isPending) {
     return (
       <View className="flex-1 items-center justify-center bg-background">
         <Spinner />
@@ -112,7 +132,8 @@ function StackLayout() {
               progress rail are the chrome, so the stack header would duplicate
               them. */}
           <Stack.Screen name="review" options={{ headerShown: false }} />
-          <Stack.Screen name="settings" options={{ title: "Settings" }} />
+          {/* Search across every shelf, opened from Library's magnifier. */}
+          <Stack.Screen name="search" options={{ title: "Search" }} />
         </Stack.Protected>
       </Stack>
 

@@ -20,6 +20,7 @@ import {
   CAPTURE_METHODS,
   DICTIONARY_SOURCES,
   FOLDER_STATUSES,
+  FOLDER_VISIBILITIES,
   OFFLINE_DICTIONARY_TIERS,
   PREFERENCE_DEFAULTS,
   normalizeTerm,
@@ -29,7 +30,7 @@ import { book } from "@better-vocab/db/schema/book";
 import { env } from "@better-vocab/env/server";
 import { defineTerm, unwrapWrappedObject } from "./enrich";
 import { resetRateLimits } from "./rate-limit";
-import { mapSearchResults } from "./routers/book";
+import { mapSearchResults, openLibraryCoverUrl } from "./routers/book";
 import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
 import { db } from "@better-vocab/db";
@@ -156,6 +157,7 @@ async function enumLabels(typeName: string) {
   return result.rows.map((r) => r.label);
 }
 assert.deepEqual(await enumLabels("folder_status"), [...FOLDER_STATUSES]);
+assert.deepEqual(await enumLabels("folder_visibility"), [...FOLDER_VISIBILITIES]);
 assert.deepEqual(await enumLabels("capture_method"), [...CAPTURE_METHODS]);
 assert.deepEqual(await enumLabels("dictionary_source"), [...DICTIONARY_SOURCES]);
 assert.deepEqual(await enumLabels("offline_dictionary_tier"), [...OFFLINE_DICTIONARY_TIERS]);
@@ -199,44 +201,57 @@ assert.equal(
 ok("definitions stay on the user's own row; the shared cache is server-only");
 
 // ---- Hardcover search mapping -------------------------------------------
-// A trimmed real Typesense payload. `image` is deliberately absent from the
-// second hit and an EMPTY OBJECT on the third: it is NOT in Hardcover's
-// documented book field list, so a cover must never be assumed present — and
-// `{}` is what a coverless book actually returns, which is not the same thing
-// as the key being missing. Requiring `url` inside it rejected whole responses
-// over one coverless hit, and common searches always contain a few.
+// A trimmed real Typesense payload. Covers come from Open Library, built from
+// the hit's `isbns`, never from Hardcover's user-uploaded `image` — which is
+// still in the payload and must be ignored. `isbns` is absent from the second
+// hit and empty on the third, and both must map to no cover without a crash.
 const mapped = mapSearchResults({
-  found: 3,
+  found: 4,
   hits: [
     {
       document: {
         id: 32897,
         title: "Dune",
         author_names: ["Frank Herbert"],
+        // Hardcover's own image is present and must be ignored: its covers are
+        // user uploads, and the app takes Open Library's instead.
         image: { url: "https://assets.hardcover.app/dune.jpg", color: "orange" },
+        // Hardcover's real order: a French edition first, English ones after.
+        isbns: ["2221127513", "9782221127513", "0441294677", "9780441294671"],
         release_year: 1965,
         users_count: 41231,
       },
     },
     { document: { id: "1913699", title: "Pale Fire", author_names: [] } },
-    { document: { id: 8675309, title: "Untitled", author_names: [], image: {} } },
+    { document: { id: 8675309, title: "Untitled", author_names: [], image: {}, isbns: [] } },
+    { document: { id: 555, title: "Hyphenated", author_names: [], isbns: ["978-3-16-148410-0"] } },
   ],
 });
-assert.equal(mapped.length, 3);
+assert.equal(mapped.length, 4);
 assert.deepEqual(mapped[0], {
   externalId: "32897",
   title: "Dune",
   authors: ["Frank Herbert"],
-  coverImageUrl: "https://assets.hardcover.app/dune.jpg",
+  coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
   description: null,
   releaseYear: 1965,
 });
-assert.equal(mapped[1].coverImageUrl, null, "a hit with no image maps to a null cover, not a crash");
+assert.equal(mapped[1].coverImageUrl, null, "a hit with no isbns maps to a null cover, not a crash");
 assert.equal(mapped[1].externalId, "1913699", "numeric and string ids both normalize to string");
-assert.equal(mapped[2].coverImageUrl, null, "image: {} is a coverless book, not a broken payload");
+assert.equal(mapped[2].coverImageUrl, null, "an empty isbn list is a coverless book, not a broken payload");
+assert.equal(
+  mapped[3].coverImageUrl,
+  "https://covers.openlibrary.org/b/isbn/9783161484100-M.jpg?default=false",
+  "hyphens are stripped, and a non-English ISBN-13 is still better than no cover",
+);
+assert.equal(
+  openLibraryCoverUrl(["9791092429213", "9798749854572"]),
+  "https://covers.openlibrary.org/b/isbn/9798749854572-M.jpg?default=false",
+  "979-1 is France and Korea, not English; 979-8 is the US",
+);
 assert.deepEqual(mapSearchResults({ found: 0, hits: [] }), [], "no matches is an empty list");
 assert.throws(() => mapSearchResults({ unexpected: true }), /Unexpected search response/);
-ok("search results map from Typesense hits, tolerating a missing cover");
+ok("search results map from Typesense hits, with Open Library covers picked by English ISBN");
 
 // ---- the proxy request budget --------------------------------------------
 // book.search and dictionary.lookup spend an external quota — Hardcover caps
@@ -287,7 +302,7 @@ const hit = {
   externalId: "32897",
   title: "Dune",
   authors: ["Frank Herbert"],
-  coverImageUrl: "https://assets.hardcover.app/dune.jpg",
+  coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
 };
 const linked = await api.folder.create({ title: hit.title, status: "reading", book: hit });
 assert.ok(linked.bookId, "folder.create upserts the picked book and links it");
@@ -315,15 +330,31 @@ ok("words captured in a linked folder carry bookId for the aggregate");
 await api.folder.delete({ id: linked.id });
 const relinked = await api.folder.create({
   title: "Dune",
-  book: { ...hit, title: "Dune (Deluxe Edition)", coverImageUrl: "https://assets.hardcover.app/dune-deluxe.jpg" },
+  book: {
+    ...hit,
+    title: "Dune (Deluxe Edition)",
+    coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780593099322-M.jpg?default=false",
+  },
 });
 assert.equal(relinked.bookId, linked.bookId, "unique(provider, external_id) keeps one row per Hardcover book");
 const refreshed = (await db.select().from(book).where(eq(book.id, relinked.bookId!)))[0];
 assert.equal(refreshed.title, "Dune (Deluxe Edition)", "upsert refreshes metadata rather than DO NOTHING");
-assert.equal(refreshed.coverImageUrl, "https://assets.hardcover.app/dune-deluxe.jpg");
+assert.equal(refreshed.coverImageUrl, "https://covers.openlibrary.org/b/isbn/9780593099322-M.jpg?default=false");
 await api.folder.delete({ id: relinked.id });
-await db.delete(book).where(eq(book.id, relinked.bookId!));
 ok("re-picking a book reuses one row and refreshes its metadata");
+
+// The book row is shared by every reader of that book, so a client's cover link
+// is kept only when it is an Open Library cover the server would build. Any
+// other URL would be one reader's image shown to all of them.
+const foreignCover = await api.folder.create({
+  title: "Dune",
+  book: { ...hit, coverImageUrl: "https://assets.hardcover.app/dune.jpg" },
+});
+const foreignRow = (await db.select().from(book).where(eq(book.id, foreignCover.bookId!)))[0];
+assert.equal(foreignRow.coverImageUrl, null, "a cover link that is not Open Library's is stored as no cover");
+await api.folder.delete({ id: foreignCover.id });
+await db.delete(book).where(eq(book.id, relinked.bookId!));
+ok("folder.create only stores Open Library cover links on the shared book row");
 
 // ---- Datamuse definition parsing ----------------------------------------
 // Real payloads, captured from api.datamuse.com.
@@ -507,6 +538,12 @@ await db
 const myFolder = await api.folder.create({ title: "Dune", book: hit });
 await api.word.create({ folderId: myFolder.id, term: "melange", captureMethod: "manual" });
 
+// Shelves are private until their reader says otherwise: nothing on one
+// reaches another reader, however many words are saved on it.
+assert.equal(otherFolder.visibility, "private", "a new shelf is private by default");
+assert.deepEqual(await api.word.suggestions({ folderId: myFolder.id }), [], "a private shelf's words reach no other reader");
+await caller(OTHER_ID).folder.update({ id: otherFolder.id, visibility: "public" });
+
 const suggested = await api.word.suggestions({ folderId: myFolder.id });
 const terms = suggested.map((row) => row.normalizedTerm);
 assert.ok(terms.includes("sietch"), "a term other readers saved is suggested");
@@ -519,6 +556,54 @@ assert.deepEqual(
   "suggestions expose counts only — no definition, sentence, or note can leak",
 );
 ok("suggestions rank others' saved words, minus mine, minus opt-outs");
+
+// The add-word screen completes a typed word from these.
+assert.deepEqual(
+  (await api.word.suggestions({ folderId: myFolder.id, prefix: " SI" })).map((row) => row.normalizedTerm),
+  ["sietch"],
+  "a prefix narrows suggestions to matching terms, trimmed and case-insensitive",
+);
+assert.deepEqual(
+  await api.word.suggestions({ folderId: myFolder.id, prefix: "%" }),
+  [],
+  "LIKE wildcards in a typed prefix match literally, not every term",
+);
+ok("suggestions complete a typed prefix, treating wildcards literally");
+
+// The add-word form's AI words. Generating them is an AI call, and db:smoke
+// makes no external calls, so the book's row is pre-filled and served as is.
+await db
+  .update(book)
+  .set({ topicWordsAt: new Date(), topicWords: [{ topic: "Desert ecology", terms: ["arid", "melange", "oasis"] }] })
+  .where(eq(book.id, myFolder.bookId!));
+assert.deepEqual(
+  await api.word.topicWords({ folderId: myFolder.id }),
+  [{ topic: "Desert ecology", terms: ["arid", "oasis"] }],
+  "a topic word already in the folder is left out",
+);
+assert.deepEqual(await api.word.topicWords({ folderId: free2.id }), [], "a freeform folder has no book to pick words for");
+await rejectsWith(
+  () => caller("someone_else").word.topicWords({ folderId: myFolder.id }),
+  /not found/i,
+  "another reader cannot read a folder's topic words",
+);
+await db.update(book).set({ topicWordsAt: null, topicWords: null }).where(eq(book.id, myFolder.bookId!));
+ok("word.topicWords serves a book's AI words minus the folder's own, to the folder's owner only");
+
+// Visibility is read live, not snapshotted: going private again takes back the
+// words that shelf had already contributed.
+await caller(OTHER_ID).folder.update({ id: otherFolder.id, visibility: "private" });
+assert.deepEqual(
+  await api.word.suggestions({ folderId: myFolder.id }),
+  [],
+  "making a shelf private again hides the words saved on it before",
+);
+await rejectsWith(
+  () => api.folder.update({ id: otherFolder.id, visibility: "public" }),
+  /not found/i,
+  "only a shelf's own reader can change its visibility",
+);
+ok("only public shelves reach other readers, and switching back to private takes effect at once");
 
 assert.deepEqual(await api.word.suggestions({ folderId: free2.id }), [], "a freeform folder has no book to compare against");
 ok("freeform folders return no suggestions rather than an error");
@@ -668,7 +753,18 @@ ok("a reviewed card drops to the back of the queue");
 const mastered = await api.word.update({ id: created!.id, mastered: true });
 assert.equal(mastered!.mastered, true);
 assert.ok(mastered!.masteredAt instanceof Date, "masteredAt is stamped alongside mastered");
+const masteredList = await api.word.mastered({});
+assert.ok(masteredList.words.some((w) => w.id === created!.id), "a mastered word is listed for the Practise tab");
+assert.ok(masteredList.total >= masteredList.words.length && masteredList.total >= 1, "and counted for the You tab");
+assert.ok(
+  !(await caller("someone_else").word.mastered({})).words.some((w) => w.id === created!.id),
+  "another reader never sees it",
+);
 assert.equal((await api.word.update({ id: created!.id, mastered: false }))!.masteredAt, null, "unmastering clears the timestamp");
+assert.ok(
+  !(await api.word.mastered({})).words.some((w) => w.id === created!.id),
+  "unmastering takes a word off the mastered list",
+);
 ok("word.update sets/clears masteredAt with mastered");
 
 // A note and a review stamp are separate axes from the definition: a flashcard

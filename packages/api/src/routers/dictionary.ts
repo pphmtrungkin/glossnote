@@ -128,6 +128,23 @@ async function fetchDatamuseDefinition(normalizedTerm: string): Promise<string |
 }
 
 /**
+ * The Datamuse gate from resolveNewTerm, for a list: the terms Datamuse has an
+ * exact entry for. Null when Datamuse can't be reached, so a caller can tell
+ * "none of these are words" from "couldn't check" and try again later rather
+ * than keep an unchecked list.
+ */
+export async function keepDictionaryWords(normalizedTerms: readonly string[]): Promise<Set<string> | null> {
+  try {
+    const checked = await Promise.all(
+      normalizedTerms.map(async (term) => [term, await fetchDatamuseDefinition(term)] as const),
+    );
+    return new Set(checked.filter(([, definition]) => definition).map(([term]) => term));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Inserts a new shared row. onConflictDoNothing covers two requests racing on
  * the same brand-new term; the loser re-reads the winner's row.
  */

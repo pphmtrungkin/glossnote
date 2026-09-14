@@ -1,8 +1,11 @@
 import { relations, sql } from "drizzle-orm";
-import { index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
-import { folderStatusEnum } from "./enums";
+import { folderStatusEnum, folderVisibilityEnum } from "./enums";
+
+/** One subject area a book draws on, and dictionary words worth knowing for it. */
+export type TopicWordGroup = { topic: string; terms: string[] };
 
 export const book = pgTable(
   "book",
@@ -18,6 +21,14 @@ export const book = pgTable(
     authors: text("authors").array().notNull().default([]),
     coverImageUrl: text("cover_image_url"),
     description: text("description"),
+    // The add-word form's AI-picked words for this book: Datamuse-checked
+    // dictionary words, grouped by subject. Keyed by book and shared by every
+    // reader of it, so a book costs one AI call however many readers add words
+    // to it — the same cost model as dictionary_entry. Never user data.
+    topicWords: jsonb("topic_words").$type<TopicWordGroup[]>(),
+    // Marker and lock, like dictionary_entry.enriched_at: claimed with a
+    // conditional update before the call, released if the call fails.
+    topicWordsAt: timestamp("topic_words_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -40,6 +51,11 @@ export const folder = pgTable(
     // home list renders without a join.
     title: text("title").notNull(),
     status: folderStatusEnum("status").notNull().default("reading"),
+    // Private by default: a shelf's words count toward what other readers of
+    // the same book see only once its reader makes it public — and even then
+    // only as counts, never definitions, notes or the shelf itself. Read live
+    // by word.suggestions, so switching back to private hides earlier words too.
+    visibility: folderVisibilityEnum("visibility").notNull().default("private"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

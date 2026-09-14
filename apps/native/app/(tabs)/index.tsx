@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Link, router } from "expo-router";
-import { Image, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
+import { CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
 import { useFolders } from "@/hooks/use-folders";
 import { trpc } from "@/utils/trpc";
@@ -69,19 +70,12 @@ export default function HomeScreen() {
             <Pressable className="mt-3 flex-row items-start gap-4">
               {/* A cover with the accent as its top edge — the design's one
                   spot of colour in this block. */}
-              <View className="h-[92px] w-[62px] justify-end border-t-[3px] border-primary bg-surface-secondary p-1.5">
-                {current.book?.coverImageUrl ? (
-                  <Image
-                    source={{ uri: current.book.coverImageUrl }}
-                    className="absolute inset-0 h-full w-full"
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <Text className="font-serif-semibold text-[9px] leading-[11px] text-foreground">
-                    {current.title}
-                  </Text>
-                )}
-              </View>
+              <CoverTile
+                uri={current.book?.coverImageUrl}
+                title={current.title}
+                accent
+                className="h-[138px] w-[92px]"
+              />
 
               <View className="flex-1">
                 <Text

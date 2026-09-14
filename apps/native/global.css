@@ -376,7 +376,12 @@
 }
 
 @theme {
-  --color-base: var(--background);
+  /* The scheme calls this colour "base", but it is registered as `page`: a
+     `--color-base` token turns Tailwind's `text-base` (a font size) into a
+     colour class too, and the add-word card's headword rendered in the page
+     colour — near-white on a grey card. Never name a colour after a Tailwind
+     size (base, xs, sm, lg, xl…). */
+  --color-page: var(--background);
   --color-ink: var(--foreground);
   --color-muted: var(--muted);
   --color-surface: var(--surface-secondary);

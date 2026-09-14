@@ -1,37 +1,38 @@
 import { normalizeTerm } from "@better-vocab/domain";
+import { Ionicons } from "@expo/vector-icons";
 import { useForm, useStore } from "@tanstack/react-form";
-import { useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
-import {
-  Button,
-  Chip,
-  FieldError,
-  Input,
-  Label,
-  Spinner,
-  Surface,
-  TextField,
-  useToast,
-} from "heroui-native";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { router, Stack, useLocalSearchParams } from "expo-router";
+import { Button, Chip, Spinner, Surface, useThemeColor, useToast } from "heroui-native";
 import { useRef } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import z from "zod";
 
 import { Container } from "@/components/container";
+import { TextField } from "@/components/text-field";
 import { WordUsage } from "@/components/word-usage";
 import { useCaptureWord } from "@/hooks/use-capture-word";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useDefinition } from "@/hooks/use-definition";
+import { getFormErrorMessage } from "@/lib/form-error";
 import { trpc } from "@/utils/trpc";
 
 const addWordSchema = z.object({
   term: z.string().trim().min(1, "Enter the word you looked up"),
 });
 
+/** Section label — the same small tracked kicker the rest of the app uses. */
+function Kicker({ children }: { children: string }) {
+  return (
+    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">{children}</Text>
+  );
+}
+
 export default function AddWordScreen() {
   const { folderId } = useLocalSearchParams<{ folderId: string }>();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const foregroundColor = useThemeColor("foreground");
 
   // Saves through the shared capture path, which queues the word on this
   // device when the request never leaves it. See hooks/use-capture-word.ts.
@@ -41,9 +42,12 @@ export default function AddWordScreen() {
         toast.show({ label: "Saved on this device — it will sync when you're back online." });
         return;
       }
-      queryClient.invalidateQueries({
-        queryKey: trpc.word.listByFolder.queryKey({ folderId }),
-      });
+      // A saved word leaves both recommendation lists for this folder.
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: trpc.word.listByFolder.queryKey({ folderId }) }),
+        queryClient.invalidateQueries({ queryKey: trpc.word.suggestions.queryKey() }),
+        queryClient.invalidateQueries({ queryKey: trpc.word.topicWords.queryKey({ folderId }) }),
+      ]);
     },
     onError: (error) => toast.show({ variant: "danger", label: error.message }),
   });
@@ -88,29 +92,121 @@ export default function AddWordScreen() {
 
   const hasSearched = debouncedTerm.trim().length > 0 && !resolution.isFetching;
 
+  // ---- New words for this book ---------------------------------------------
+  // This form is the only place the app recommends words, from two sources.
+  // Tapping one only fills the field, so the definition card below takes over
+  // and a recommended word is saved exactly like a typed one.
+  const typed = term.trim();
+  const prefix = debouncedTerm.trim();
+
+  // Other readers of this book: their most-saved words while the field is
+  // empty, and completions once two letters are typed — mostly names and
+  // invented words no dictionary has, so completing one saves a misspelling.
+  const readers = useQuery({
+    ...trpc.word.suggestions.queryOptions({
+      folderId,
+      prefix: prefix.length >= 2 ? prefix : undefined,
+      limit: 5,
+    }),
+    // A convenience, not a result: offline or on a freeform shelf there are
+    // simply none, and a retry would only delay the definition card.
+    retry: false,
+  });
+  // One typed letter narrows nothing, so the list waits for a second. The
+  // word already in the field is not a suggestion for itself.
+  const readerWords =
+    typed.length === 0 || prefix.length >= 2
+      ? (readers.data ?? []).filter((match) => match.normalizedTerm !== normalizeTerm(term))
+      : [];
+
+  // AI-picked words for the subjects the book draws on, generated once per
+  // book on the server and checked against a dictionary. Shown only while the
+  // field is empty: once the reader types their own word, these are in the way.
+  const topics = useQuery({ ...trpc.word.topicWords.queryOptions({ folderId }), retry: false });
+  const topicGroups = typed.length === 0 ? (topics.data ?? []) : [];
+
   return (
     <Container className="px-6 pb-8">
+      {/* A modal needs a visible way out: the swipe-down gesture is iOS-only
+          and undiscoverable, and Android shows no back arrow on a modal. */}
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={8}
+              className="px-2.5"
+            >
+              <Ionicons name="close" size={24} color={foregroundColor} />
+            </Pressable>
+          ),
+        }}
+      />
+
       <View className="gap-3 pt-4">
         <form.Field name="term">
           {(field) => (
-            <TextField>
-              <Label>Word</Label>
-              <Input
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChangeText={field.handleChange}
-                placeholder="perspicacious"
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-                returnKeyType="done"
-              />
-              <FieldError isInvalid={!field.state.meta.isValid}>
-                {field.state.meta.errors[0]?.message}
-              </FieldError>
-            </TextField>
+            <TextField
+              label="Word"
+              error={getFormErrorMessage(field.state.meta.errors)}
+              value={field.state.value}
+              onBlur={field.handleBlur}
+              onChangeText={field.handleChange}
+              placeholder="perspicacious"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+              returnKeyType="done"
+            />
           )}
         </form.Field>
+
+        {readerWords.length > 0 ? (
+          <View>
+            {/* Other readers' data stays muted grey by rule. */}
+            <Kicker>Readers of this book saved</Kicker>
+            {readerWords.map((match) => (
+              <Pressable
+                key={match.normalizedTerm}
+                onPress={() => form.setFieldValue("term", match.term)}
+                accessibilityRole="button"
+                accessibilityLabel={`Use ${match.term}`}
+                className="flex-row items-baseline justify-between gap-3 border-b border-surface-strong py-2.5"
+              >
+                <Text className="flex-1 font-serif-semibold text-[16px] text-foreground">{match.term}</Text>
+                <Text className="text-[11px] text-muted">
+                  {match.readers === 1 ? "1 reader" : `${match.readers} readers`}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {topicGroups.length > 0 ? (
+          <View className="gap-3 pt-1">
+            <Kicker>Suggested by AI for this book</Kicker>
+            {topicGroups.map((group) => (
+              <View key={group.topic}>
+                <Text className="text-[12.5px] text-muted">{group.topic}</Text>
+                <View className="mt-1.5 flex-row flex-wrap gap-2">
+                  {group.terms.map((word) => (
+                    <Pressable
+                      key={word}
+                      onPress={() => form.setFieldValue("term", word)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use ${word}`}
+                      className="rounded-card border border-surface-strong px-2.5 py-1.5"
+                    >
+                      <Text className="font-serif text-[14px] text-foreground">{word}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         {resolution.isFetching && !suggestion ? (
           <View className="items-start py-2">

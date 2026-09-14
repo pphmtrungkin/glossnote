@@ -67,10 +67,27 @@ Why? If we accepted a missing `hits` as "no results", then "Hardcover changed th
 | `externalId` | `document.id` | Converted to a string; the API returns either |
 | `title` | `document.title` | |
 | `authors` | `document.author_names` | Defaults to `[]` |
-| `coverImageUrl` | `document.image.url` | **Optional** — see below |
+| `coverImageUrl` | `document.isbns` | An Open Library cover link, or `null` — see below |
 | `description` | `document.description` | |
 
-`image` is **not** in Hardcover's documented list of indexed book fields. So we treat a cover as possibly missing instead of assuming it exists. The shelf shows a book icon when it is null, and `db:smoke` checks that a hit with no image maps to `null` and does not crash.
+## Covers come from Open Library, not Hardcover
+
+Hardcover's own `image` field is **not** used. Its covers are uploaded by Hardcover users, and Hardcover warns that serving them publicly invites copyright claims. `openLibraryCoverUrl` builds an [Open Library Covers API](https://openlibrary.org/dev/docs/api/covers) link from the hit's ISBNs instead:
+
+```
+https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false
+```
+
+Hardcover lists every edition's ISBN, in every language, in no useful order. So the link uses an English-edition ISBN (978-0, 978-1 or 979-8) where there is one, and ISBN-13 before ISBN-10.
+
+- **Fewer books have a cover.** On 27 real search results, 7 got an Open Library cover, where Hardcover's own images covered 19. The [changelog](/docs/changelog) records the other approaches that were measured, and why they lost.
+- **The server makes no request.** The phone loads the image, so Open Library's ISBN limit (100 requests per 5 minutes per IP) is spent per device.
+- **A missing cover is a 404, not a blank image,** because of `?default=false`. `components/book-cover.tsx` shows the book icon when the load fails.
+- **Only this kind of link is stored.** `folder.create` stores any other `coverImageUrl` as `null`, because the `book` row is shared by every reader of that book. `db:smoke` checks it.
+
+<Callout type="warn">
+Open Library is a wiki, and its covers are uploaded by its users too. Publish a DMCA takedown policy before the app is public, whichever source the covers come from.
+</Callout>
 
 ## Why `provider` and `externalId` are plain text
 

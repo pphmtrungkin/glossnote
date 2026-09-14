@@ -1,33 +1,35 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Link, Tabs } from "expo-router";
+import { Tabs } from "expo-router";
 import { useCallback } from "react";
-import { Pressable, StyleSheet, type ColorValue } from "react-native";
+import { StyleSheet, type ColorValue } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
 import { ReadingThemePicker } from "@/components/reading-theme-picker";
 import { usePalette } from "@/lib/palette";
 
 /**
- * The design's bottom bar.
+ * The bottom bar: Today, Library, Practise, You.
  *
- * The canvas draws five tabs — Today, Library, Shelves, Discover, You. Three of
- * them front the screens this app doesn't have (the social feed, discovery and
- * a profile), so only the three that exist are rendered; a tab that opens
- * nothing is worse than an absent one. "Discover" keeps its magnifier but not
- * its name: here the magnifier searches books and words, and borrowing the
- * design's label would advertise the social screen it belongs to.
+ * The canvas draws five tabs — Today, Library, Shelves, Discover, You. Shelves
+ * and Library are the same screen here, and Discover fronts a social feed this
+ * app doesn't have, so it is left out rather than opening nothing. Practise
+ * takes its place: the review run is the retention half of the app, and it was
+ * only reachable from buttons on other screens. Search lives behind Library's
+ * magnifier, and the settings behind the old header gear now live in You.
  *
- * The icons are the canvas's own paths rather than Ionicons because the active
- * state is a *weight* shift — 1.3 to 1.9 stroke — and a glyph font can only
- * change colour. `tabBarIcon` gives us `focused`, so react-navigation still
- * owns the bar itself: press handling, accessibility and the bottom inset.
+ * The icons are drawn rather than Ionicons because the active state is a
+ * *weight* shift — 1.3 to 1.9 stroke — and a glyph font can only change
+ * colour. `tabBarIcon` gives us `focused`, so react-navigation still owns the
+ * bar itself: press handling, accessibility and the bottom inset.
  */
 
-/** viewBox 0 0 24 24, as drawn in the canvas. */
+/** viewBox 0 0 24 24. Today and Library are the canvas's own paths. */
 const ICONS = {
   today: "M4 11l8-6 8 6v9H4z",
   library: "M4 4h6v16H4zM12 4h3v16h-3zM17 5l3 15",
-  search: "M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4",
+  // A card in front of the deck it came from.
+  practise: "M7 4h12v14M4 7h12v13H4z",
+  // A head and shoulders.
+  you: "M12 4a4 4 0 110 8 4 4 0 010-8zM4 20c1.2-3.6 4.2-5.5 8-5.5s6.8 1.9 8 5.5",
 } as const;
 
 function TabIcon({ d, color, focused }: { d: string; color: ColorValue; focused: boolean }) {
@@ -41,22 +43,8 @@ function TabIcon({ d, color, focused }: { d: string; color: ColorValue; focused:
 export default function TabLayout() {
   const palette = usePalette();
 
-  // The drawer that used to host the theme control is gone, so the Kindle-style
-  // "Aa" page-colour picker lives in the tab header instead.
+  // The Kindle-style "Aa" page-colour picker lives in the tab header.
   const renderThemePicker = useCallback(() => <ReadingThemePicker />, []);
-  // Sign-out used to sit here on its own. It now lives inside Settings, which
-  // is where the offline dictionary and the privacy toggle need a home anyway
-  // — one header slot, three settings behind it instead of one action.
-  const renderSettings = useCallback(
-    () => (
-      <Link href="/settings" asChild>
-        <Pressable accessibilityRole="button" accessibilityLabel="Settings" className="px-2.5">
-          <Ionicons name="settings-outline" size={20} color={palette.ink} />
-        </Pressable>
-      </Link>
-    ),
-    [palette.ink],
-  );
 
   return (
     <Tabs
@@ -65,7 +53,6 @@ export default function TabLayout() {
         headerTintColor: palette.ink,
         headerTitleStyle: { color: palette.ink, fontFamily: "SourceSerif4_600SemiBold" },
         headerRight: renderThemePicker,
-        headerLeft: renderSettings,
 
         // The accent marks where the reader is, and nothing else in the bar —
         // the scheme spends it on one thing per screen.
@@ -93,9 +80,7 @@ export default function TabLayout() {
         options={{
           title: "GlossNote",
           tabBarLabel: "Today",
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon d={ICONS.today} color={color} focused={focused} />
-          ),
+          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.today} color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -103,18 +88,21 @@ export default function TabLayout() {
         options={{
           title: "Shelf",
           tabBarLabel: "Library",
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon d={ICONS.library} color={color} focused={focused} />
-          ),
+          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.library} color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
-        name="search"
+        name="practise"
         options={{
-          title: "Search",
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon d={ICONS.search} color={color} focused={focused} />
-          ),
+          title: "Practise",
+          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.practise} color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="you"
+        options={{
+          title: "You",
+          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.you} color={color} focused={focused} />,
         }}
       />
     </Tabs>

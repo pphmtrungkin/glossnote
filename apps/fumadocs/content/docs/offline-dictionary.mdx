@@ -260,7 +260,7 @@ That single statement is the whole reason the three tier tables were merged into
 
 The row count and byte size are recorded in `app_setting` instead of being recomputed. `count(*) WHERE source = 'extended'` cannot use the `(term, source, rank)` index, because `source` is not its first column. So counting would scan the whole table.
 
-`app/settings.tsx` drives both halves. Installing also sets `preference.offlineDictionaryTier` to `extended`, because the **pack** is per-device while the **preference** is per-account. That is what tells a new phone to download it too.
+`app/(tabs)/you.tsx` drives both halves. Installing also sets `preference.offlineDictionaryTier` to `extended`, because the **pack** is per-device while the **preference** is per-account. That is what tells a new phone to download it too.
 
 ## When the device is online
 

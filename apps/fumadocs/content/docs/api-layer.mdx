@@ -231,7 +231,7 @@ Two details are worth knowing:
 - **`get` never writes.** A user who has never opened Settings has no row, and receives the same defaults the column would apply. So the settings screen can render on first launch without a write. `PREFERENCE_DEFAULTS` lives in `@better-vocab/domain`, so the router and the Postgres column default cannot disagree.
 - **`update` writes field by field.** A toggle sends only the value it changed, instead of sending the whole screen back. So one device cannot overwrite a setting that another device just changed. `updatedAt` is always in the `SET` clause. That keeps the timestamp correct on the conflict path (Drizzle's `$onUpdate` only runs for a plain `UPDATE`), and it means the clause is never empty when a caller sends nothing.
 
-`apps/native/app/settings.tsx` is the caller.
+`apps/native/app/(tabs)/you.tsx` is the caller.
 
 ## The `word` router
 
@@ -243,7 +243,8 @@ Two details are worth knowing:
 | `search` | Search the caller's words across **all** folders. This is the server version of the offline SQLite search |
 | `create` | Save one word, the moment the reader taps Save |
 | `createMany` | Send the phone's offline queue in one request — see below |
-| `suggestions` | Words other readers of this book saved that the caller does not have. Counts only, no definitions |
+| `suggestions` | Words other readers of this book saved that the caller does not have. Counts only, no definitions. An optional `prefix` narrows it to words starting with what the reader typed, which is how Add word completes a word |
+| `topicWords` | AI-picked words for the folder's book, grouped by subject, minus words already in the folder — see below |
 | `quiz` | Fill-in-the-blank cards over the caller's own words — see below |
 | `update` | Edit the reader's note, toggle `mastered`, or stamp a review. It cannot change a definition |
 | `delete` | Remove a word |
@@ -339,6 +340,19 @@ The app resolves each suggested term against its own local dictionary, exactly l
 That also makes spoiler safety structural instead of a convention. There is no column in this result that could carry a context sentence or a personal note.
 
 Freeform folders have no book, so there is no group of readers to compare with. The procedure returns an empty list, not an error.
+
+An optional `prefix` adds `AND normalized_term LIKE $prefix || '%'`. The prefix is normalized first, and LIKE's own `%` and `_` are escaped, so a typed `%` matches only a `%`. The add-word form sends it once two letters are typed, to complete a word from other readers' captures.
+
+### `word.topicWords`
+
+The add-word form's other source of new words: subject areas the folder's book draws on, each with dictionary words worth knowing. It returns `[{ topic, terms }]`, minus words already in the folder.
+
+- **Generated once per book, for everyone.** `suggestTopicWords` in `enrich.ts` asks the model for three subjects and six words each, from the book's title, authors and description. The result is stored on `book.topicWords`, so a book costs one AI call however many readers add words to it.
+- **Locked like enrichment.** `book.topicWordsAt` is claimed with a conditional update before the call, so two readers opening the form for the same new book buy one call between them. A failed call releases it.
+- **Every word passes the Datamuse check** in `keepDictionaryWords`, the same check a looked-up word goes through ([Datamuse decides whether it is a word](#datamuse-decides-whether-it-is-a-word)). The prompt forbids names, invented words and anything from the plot, but a prompt is not a guarantee. If Datamuse cannot be reached, nothing is stored and a later open retries.
+- **Never an error for the form.** A freeform folder, no AI key, or a failed call all return an empty list, and the form simply shows no AI section.
+
+Measured on 2026-09-14 for the seeded *Dune* book: the first call took 1.8 s and returned "Desert ecology" (arid, xerophyte, wadi, haboob, simoom, dune), "Court politics" (fealty, vassal, appanage, chivalry, regicide, treason) and "Religious movements" (ascetic, heresy, schism, dogma, proselyte, apostasy). A repeat took 17 ms.
 
 ## The native client
 

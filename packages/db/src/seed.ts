@@ -102,6 +102,10 @@ async function seed() {
       externalId: "312460",
       title: "Dune",
       authors: ["Frank Herbert"],
+      // Real Open Library covers, in the exact form openLibraryCoverUrl builds
+      // (routers/book.ts), so the seeded shelves show covers instead of the
+      // title placeholder. Both ISBNs were checked to return an image.
+      coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441172696-M.jpg?default=false",
       description: "Political intrigue and ecology on the desert planet Arrakis.",
     },
     {
@@ -110,6 +114,7 @@ async function seed() {
       externalId: "141104",
       title: "Pale Fire",
       authors: ["Vladimir Nabokov"],
+      coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780679723424-M.jpg?default=false",
       description: "A 999-line poem and its increasingly unreliable commentary.",
     },
   ];

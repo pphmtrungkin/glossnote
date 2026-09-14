@@ -15,6 +15,7 @@ export type FolderRow = {
   id: string;
   title: string;
   status: "reading" | "finished" | "misc";
+  visibility: "private" | "public";
   bookId: string | null;
   wordCount: number;
   book: { title: string; authors: string[]; coverImageUrl: string | null } | null;

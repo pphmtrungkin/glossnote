@@ -5,13 +5,21 @@ import { Pressable, Text, TextInput, View, type TextInputProps } from "react-nat
 import { usePalette } from "@/lib/palette";
 
 type Props = TextInputProps & {
-  label: string;
+  /** Omit when the screen labels the field itself — a search bar, or a section kicker. */
+  label?: string;
   /** The message for this field, or null when it is valid. */
   error?: string | null;
+  /** The bigger serif field a search bar uses. */
+  large?: boolean;
 };
 
 /**
- * A labelled text input in plain React Native — label, field, error message.
+ * The app's one text input, in plain React Native — label, field, error message.
+ *
+ * Every text field in the app goes through this rather than HeroUI's `Input`,
+ * `TextField` or `TextArea`, so one component owns how a field looks and
+ * behaves on every page theme. `multiline` makes it a note box; `className` is
+ * added to the field's own classes rather than replacing them.
  *
  * The focus ring is local state rather than a `:focus` variant: React Native
  * has no focus pseudo-class, so a border that changes on focus has to be told
@@ -22,7 +30,7 @@ type Props = TextInputProps & {
  * keyboard.
  */
 export const TextField = forwardRef<TextInput, Props>(function TextField(
-  { label, error, onFocus, onBlur, secureTextEntry, ...props },
+  { label, error, large = false, onFocus, onBlur, secureTextEntry, multiline, className, ...props },
   ref,
 ) {
   const [isFocused, setIsFocused] = useState(false);
@@ -35,19 +43,30 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
       ? "border-primary"
       : "border-surface-strong";
 
+  // One size class per field, never two: which of two `text-[…]` classes wins
+  // is decided by stylesheet order, not by their order in the string.
+  const sizeClassName = multiline
+    ? "min-h-24 py-2.5 text-[15px]"
+    : large
+      ? "min-h-14 font-serif-semibold text-[19px]"
+      : "min-h-12 text-[15px]";
+
   return (
     <View className="gap-1.5">
-      <Text className="text-[13px] text-muted">{label}</Text>
+      {label ? <Text className="text-[13px] text-muted">{label}</Text> : null}
 
       <View className="justify-center">
         <TextInput
           ref={ref}
-          className={`min-h-12 rounded-lg border-2 bg-base px-3 text-[15px] text-foreground ${borderClassName} ${
+          className={`rounded-lg border-2 bg-page px-3 text-foreground ${sizeClassName} ${borderClassName} ${
             secureTextEntry ? "pr-11" : ""
-          }`}
+          } ${className ?? ""}`}
           placeholderTextColor={palette.muted}
           selectionColor={palette.primary}
           secureTextEntry={secureTextEntry && !isRevealed}
+          multiline={multiline}
+          // Android centres multiline text vertically by default.
+          textAlignVertical={multiline ? "top" : undefined}
           onFocus={(event) => {
             setIsFocused(true);
             onFocus?.(event);

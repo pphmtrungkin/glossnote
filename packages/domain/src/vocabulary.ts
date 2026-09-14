@@ -14,6 +14,14 @@
 export const FOLDER_STATUSES = ["reading", "finished", "misc"] as const;
 export type FolderStatus = (typeof FOLDER_STATUSES)[number];
 
+/**
+ * Who a shelf's words reach. `private`, the default, keeps them out of what
+ * other readers of the same book see; `public` lets them count toward it —
+ * as counts only, never definitions, notes or the shelf itself.
+ */
+export const FOLDER_VISIBILITIES = ["private", "public"] as const;
+export type FolderVisibility = (typeof FOLDER_VISIBILITIES)[number];
+
 export const CAPTURE_METHODS = ["manual", "voice"] as const;
 export type CaptureMethod = (typeof CAPTURE_METHODS)[number];
 

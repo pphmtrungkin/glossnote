@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
+import { useFolders } from "@/hooks/use-folders";
 import { authClient } from "@/lib/auth-client";
 import {
   formatBytes,
@@ -17,13 +18,17 @@ import {
 import { queryClient as appQueryClient, trpc } from "@/utils/trpc";
 
 /**
- * The design's `settings` screen — grouped label/hint/value rows.
+ * The You tab: who is signed in, what they have, and every setting.
  *
- * Two of the three groups are backed by `preference.get`/`preference.update`,
- * which had no caller until now. The offline dictionary row is the odd one: the
- * *preference* is per-account (it follows the reader to a new phone), while the
- * downloaded pack is per-device, so the row drives both — installing sets the
- * tier to `extended`, removing sets it back to `core`.
+ * The settings used to be their own screen behind a header gear. The groups
+ * below are that screen, unchanged in behaviour: two of the three are backed
+ * by `preference.get`/`preference.update`. The offline dictionary row is the
+ * odd one: the *preference* is per-account (it follows the reader to a new
+ * phone), while the downloaded pack is per-device, so the row drives both —
+ * installing sets the tier to `extended`, removing sets it back to `core`.
+ *
+ * The counts are only numbers the data backs. There is no streak or reading
+ * progress, because nothing records either.
  */
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
@@ -75,10 +80,27 @@ function Row({
   );
 }
 
-export default function SettingsScreen() {
+function Stat({ label, value }: { label: string; value: number | undefined }) {
+  return (
+    <View className="flex-1 items-center">
+      <Text className="font-serif-semibold text-[24px] leading-[28px] text-foreground">{value ?? "–"}</Text>
+      <Text className="mt-1 text-[10px] uppercase tracking-[1.2px] text-muted">{label}</Text>
+    </View>
+  );
+}
+
+export default function YouScreen() {
   const db = useSQLiteContext();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const session = authClient.useSession();
+  const user = session.data?.user;
+
+  const folders = useFolders().data;
+  // Only the total is needed here; the Practise tab lists the words.
+  const mastered = useQuery(trpc.word.mastered.queryOptions({ limit: 1 }));
+  const wordsSaved = folders?.reduce((total, shelf) => total + shelf.wordCount, 0);
 
   const preference = useQuery(trpc.preference.get.queryOptions());
   const updatePreference = useMutation(
@@ -156,9 +178,18 @@ export default function SettingsScreen() {
 
   return (
     <Container className="px-6 pb-10">
-      <Text className="mt-3 mb-6 font-serif-semibold text-[27px] leading-[31px] tracking-[-0.6px] text-foreground">
-        Settings
+      {/* ---- Who is signed in ---------------------------------------------- */}
+      <Text className="mt-3 font-serif-semibold text-[27px] leading-[31px] tracking-[-0.6px] text-foreground">
+        {user?.name || "You"}
       </Text>
+      {user?.email ? <Text className="mt-1 text-[13.5px] text-muted">{user.email}</Text> : null}
+
+      {/* ---- What they have ------------------------------------------------ */}
+      <View className="mt-6 mb-8 flex-row border-y border-surface-strong py-4">
+        <Stat label="Words saved" value={wordsSaved} />
+        <Stat label="Mastered" value={mastered.data?.total} />
+        <Stat label="Shelves" value={folders?.length} />
+      </View>
 
       <Group title="Offline">
         {!packUrl ? (
@@ -211,7 +242,7 @@ export default function SettingsScreen() {
       <Group title="Privacy">
         <Row
           label="Contribute to word counts"
-          hint="Other readers of a book see how often a word was saved — never what it means to you, and never your notes."
+          hint="On your public shelves, other readers of a book see how often a word was saved — never what it means to you, and never your notes."
           value={preference.data?.contributeToAggregateByDefault ? "On" : "Off"}
           valueClassName={
             preference.data?.contributeToAggregateByDefault ? "text-primary" : "text-muted"
@@ -239,7 +270,8 @@ export default function SettingsScreen() {
       </Group>
 
       <Text className="text-[12.5px] leading-[20px] text-muted">
-        Words you save stay yours. Only how often a word was saved crosses between readers.
+        Words you save stay yours. Only how often a word was saved crosses between readers, and only from shelves
+        you make public.
       </Text>
     </Container>
   );

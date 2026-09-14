@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { Spinner, TextArea, useToast } from "heroui-native";
+import { Spinner, useToast } from "heroui-native";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
+import { CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
+import { TextField } from "@/components/text-field";
 import { WordUsage } from "@/components/word-usage";
 import { useFolders } from "@/hooks/use-folders";
 import { masteryOf } from "@/lib/mastery";
@@ -86,11 +88,21 @@ export default function WordScreen() {
     <Container className="px-6 pb-8">
       <Stack.Screen options={{ title: folder?.title ?? "Word" }} />
 
-      <Text className="mt-3 text-[10.5px] uppercase tracking-[1.5px] text-muted">
-        {/* The design ends this line with a page number. Captures don't record
-            one, so the shelf title is where it stops. */}
-        {[state, folder?.title].filter(Boolean).join(" · ")}
-      </Text>
+      <View className="mt-3 flex-row items-center gap-2.5">
+        {folder?.bookId ? (
+          <CoverTile
+            uri={folder.book?.coverImageUrl}
+            title={folder.title}
+            compact
+            className="h-[60px] w-[40px]"
+          />
+        ) : null}
+        <Text className="flex-1 text-[10.5px] uppercase tracking-[1.5px] text-muted">
+          {/* The design ends this line with a page number. Captures don't record
+              one, so the shelf title is where it stops. */}
+          {[state, folder?.title].filter(Boolean).join(" · ")}
+        </Text>
+      </View>
 
       <Text className="mt-3.5 font-serif-semibold text-[40px] leading-[40px] tracking-[-1px] text-foreground">
         {word.term}
@@ -140,12 +152,13 @@ export default function WordScreen() {
       {/* ---- The reader's own note ------------------------------------------ */}
       <View className="mt-7">
         <Kicker>Your note</Kicker>
-        <TextArea
+        <TextField
           value={note}
           onChangeText={setNote}
           placeholder="Where you met it, or how you'd use it."
+          accessibilityLabel="Your note"
           className="mt-2"
-          numberOfLines={3}
+          multiline
         />
         {note !== (word.personalNote ?? "") ? (
           <Pressable

@@ -6,14 +6,17 @@ import {
   parseContext,
 } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
-import { folder } from "@better-vocab/db/schema/book";
+import { book, folder, type TopicWordGroup } from "@better-vocab/db/schema/book";
 import { dictionaryEntry } from "@better-vocab/db/schema/dictionary";
 import { userPreference } from "@better-vocab/db/schema/preference";
 import { word } from "@better-vocab/db/schema/word";
-import { and, desc, eq, ilike, inArray, ne, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, like, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { suggestTopicWords } from "../enrich";
 import { protectedProcedure, router } from "../index";
+import { rateLimit } from "../rate-limit";
+import { keepDictionaryWords } from "./dictionary";
 
 /** Where a word sits in the reader's rotation — the scheme's three states. */
 type Mastery = "new" | "learning" | "steady";
@@ -106,6 +109,43 @@ async function captureWord(args: {
   return existing!;
 }
 
+/**
+ * A book's AI-picked words, generated at most once for the whole user base.
+ *
+ * `topicWordsAt` is claimed with a conditional update before the AI call,
+ * exactly like `enrichedAt` on dictionary_entry: two readers opening the
+ * add-word form for the same new book buy one call between them. The loser
+ * gets nothing this time and sees the words on its next open.
+ *
+ * Every suggested word must pass the same Datamuse check a looked-up word does,
+ * because a prompt does not reliably keep invented words out. A failed call, or
+ * an unreachable Datamuse, releases the claim so a later open retries.
+ */
+async function topicWordsFor(row: typeof book.$inferSelect): Promise<TopicWordGroup[]> {
+  if (row.topicWordsAt) return row.topicWords ?? [];
+
+  const [claimed] = await db
+    .update(book)
+    .set({ topicWordsAt: new Date() })
+    .where(and(eq(book.id, row.id), isNull(book.topicWordsAt)))
+    .returning({ id: book.id });
+  if (!claimed) return [];
+
+  const suggested = await suggestTopicWords(row);
+  const known = suggested && (await keepDictionaryWords([...new Set(suggested.flatMap((entry) => entry.terms))]));
+  if (!suggested || !known) {
+    await db.update(book).set({ topicWordsAt: null }).where(eq(book.id, row.id));
+    return [];
+  }
+
+  const topics = suggested
+    .map((entry) => ({ topic: entry.topic, terms: entry.terms.filter((term) => known.has(term)) }))
+    .filter((entry) => entry.terms.length > 0);
+
+  await db.update(book).set({ topicWords: topics }).where(eq(book.id, row.id));
+  return topics;
+}
+
 const captureSchema = z.object({
   folderId: z.string(),
   term: z.string().min(1),
@@ -144,7 +184,8 @@ export const wordRouter = router({
   search: protectedProcedure.input(z.object({ query: z.string().min(1) })).query(({ ctx, input }) =>
     db.query.word.findMany({
       where: and(eq(word.userId, ctx.session.user.id), ilike(word.term, `%${input.query}%`)),
-      with: { dictionaryEntry: true, folder: true },
+      // The folder's book comes along for the cover on each result.
+      with: { dictionaryEntry: true, folder: { with: { book: true } } },
       orderBy: desc(word.createdAt),
       limit: 50,
     }),
@@ -239,7 +280,17 @@ export const wordRouter = router({
   // personal note, which is the spoiler-safety requirement (SoftwareSpec §10)
   // — there is no column here that could carry one.
   suggestions: protectedProcedure
-    .input(z.object({ folderId: z.string(), limit: z.number().int().min(1).max(50).default(20) }))
+    .input(
+      z.object({
+        folderId: z.string(),
+        limit: z.number().int().min(1).max(50).default(20),
+        // What the reader has typed so far. The add-word screen completes a
+        // word from this — mostly names and invented words no dictionary has.
+        // Matching only a typed prefix is also what keeps completion from
+        // spoiling a word the reader hasn't met yet.
+        prefix: z.string().trim().max(100).optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const ownedFolder = await assertFolderOwnership(ctx.session.user.id, input.folderId);
 
@@ -261,13 +312,23 @@ export const wordRouter = router({
           readers: sql<number>`count(distinct ${word.userId})::int`,
         })
         .from(word)
+        .innerJoin(folder, eq(folder.id, word.folderId))
         .where(
           and(
             eq(word.bookId, ownedFolder.bookId),
+            // Only shelves their readers made public count. Read live rather
+            // than snapshotted, so switching a shelf back to private hides the
+            // words saved on it before as well.
+            eq(folder.visibility, "public"),
             eq(word.contributesToAggregate, true),
             // Your own captures never suggest themselves back to you.
             ne(word.userId, ctx.session.user.id),
             notInArray(word.normalizedTerm, mine),
+            // LIKE's own wildcards are escaped, so a typed "%" matches a "%".
+            // normalized_term is lowercase, so the prefix is normalized too.
+            input.prefix
+              ? like(word.normalizedTerm, `${normalizeTerm(input.prefix).replace(/[\\%_]/g, "\\$&")}%`)
+              : undefined,
           ),
         )
         .groupBy(word.normalizedTerm)
@@ -275,6 +336,40 @@ export const wordRouter = router({
         .limit(input.limit);
 
       return rows;
+    }),
+
+  /**
+   * AI-picked words for this shelf's book, grouped by subject — the add-word
+   * form's second source of new words, next to `suggestions`.
+   *
+   * The words are shared per book (see topicWordsFor) and are not user data,
+   * so unlike `suggestions` there is no count to protect; the result still
+   * leaves out words already in this folder, the same way. Empty for a
+   * freeform shelf, and whenever AI or Datamuse can't answer — never an error,
+   * since the form works without it.
+   */
+  topicWords: protectedProcedure
+    // The first open for a new book waits on an AI call and a Datamuse check
+    // per word; every later open is two reads. This only stops a client stuck
+    // in a loop.
+    .use(rateLimit({ name: "word.topicWords", max: 30, windowSeconds: 60 }))
+    .input(z.object({ folderId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const ownedFolder = await assertFolderOwnership(ctx.session.user.id, input.folderId);
+      if (!ownedFolder.bookId) return [];
+
+      const row = await db.query.book.findFirst({ where: eq(book.id, ownedFolder.bookId) });
+      if (!row) return [];
+
+      const [topics, inFolder] = await Promise.all([
+        topicWordsFor(row),
+        db.select({ term: word.normalizedTerm }).from(word).where(eq(word.folderId, input.folderId)),
+      ]);
+      const saved = new Set(inFolder.map((entry) => entry.term));
+
+      return topics
+        .map((entry) => ({ topic: entry.topic, terms: entry.terms.filter((term) => !saved.has(term)) }))
+        .filter((entry) => entry.terms.length > 0);
     }),
 
   /**
@@ -388,6 +483,27 @@ export const wordRouter = router({
           },
         ];
       });
+    }),
+
+  /**
+   * The reader's mastered words, most recently mastered first, and how many
+   * there are in all. A mastered word leaves `quiz` for good; this is where the
+   * Practise tab still lists it and the You tab counts it.
+   */
+  mastered: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(100).default(50) }))
+    .query(async ({ ctx, input }) => {
+      const isMine = and(eq(word.userId, ctx.session.user.id), eq(word.mastered, true));
+      const [words, totals] = await Promise.all([
+        db.query.word.findMany({
+          where: isMine,
+          with: { folder: true, dictionaryEntry: true },
+          orderBy: [desc(word.masteredAt), word.id],
+          limit: input.limit,
+        }),
+        db.select({ total: sql<number>`count(*)::int` }).from(word).where(isMine),
+      ]);
+      return { total: totals[0]?.total ?? 0, words };
     }),
 
   update: protectedProcedure

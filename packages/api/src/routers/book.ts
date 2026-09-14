@@ -26,19 +26,20 @@ const SEARCH_QUERY = `
 // `results` is the raw Typesense payload, typed as an untyped JSON scalar in
 // Hardcover's schema. Parsed loosely on purpose: their docs list the indexed
 // fields but not the JSON shape, and the index gains fields over time — an
-// exact schema would break on their deploys, not ours. `image` in particular
-// is NOT in the documented book field list, so it is treated as optional
-// rather than assumed.
+// exact schema would break on their deploys, not ours.
+//
+// Hardcover's own `image` is deliberately not read. Its covers are uploaded by
+// Hardcover users, and Hardcover warns that serving them publicly invites
+// copyright claims, so covers come from Open Library by ISBN instead — see
+// openLibraryCoverUrl. Open Library's covers are user-uploaded too, so that
+// swap is not a licence: the takedown-policy advice in docs/book-search holds.
 const hitSchema = z.object({
   document: z.looseObject({
     id: z.union([z.string(), z.number()]),
     title: z.string(),
     author_names: z.array(z.string()).nullish(),
-    // A book with no cover comes back as `image: {}` — the key is present and
-    // the object is empty, not null. So `url` has to be optional *inside* the
-    // object as well: requiring it here rejected the whole response over one
-    // coverless hit, and searches like "1984" or "the" always contain a few.
-    image: z.looseObject({ url: z.string().nullish() }).nullish(),
+    // Every edition's ISBN, in every language, in no useful order.
+    isbns: z.array(z.string()).nullish(),
     description: z.string().nullish(),
     release_year: z.number().nullish(),
   }),
@@ -48,6 +49,45 @@ const hitSchema = z.object({
 // without one means the response is not what we think it is. Accepting it as
 // missing would turn "Hardcover changed their API" into a silent "no matches".
 const resultsSchema = z.looseObject({ hits: z.array(hitSchema) });
+
+/** The only cover link a book row may hold: one openLibraryCoverUrl built. */
+const OPEN_LIBRARY_COVER = /^https:\/\/covers\.openlibrary\.org\/b\/isbn\/[0-9X]{10,13}-M\.jpg\?default=false$/;
+
+/** English-language registration groups: 978-0, 978-1 and 979-8, or 0 and 1 for an ISBN-10. */
+function isEnglishIsbn(isbn: string) {
+  return isbn.length === 13 ? /^978[01]|^9798/.test(isbn) : /^[01]/.test(isbn);
+}
+
+/**
+ * An Open Library cover link for a Hardcover hit, or null.
+ *
+ * Hardcover lists every edition's ISBN, so the pick matters: an English
+ * edition first (Open Library's covers are mostly English editions), ISBN-13
+ * before ISBN-10. Measured on 27 real results on 2026-09-13, this found 7
+ * covers where Hardcover's own images had 19 — the price of not serving
+ * Hardcover's user-uploaded images.
+ *
+ * No request is made here. The phone loads the image, so Open Library's ISBN
+ * rate limit (100 per 5 minutes per IP) is spent per device, not by the server,
+ * and `?default=false` turns a missing cover into a 404 the app falls back on
+ * instead of a blank white image.
+ *
+ * ponytail: first-pick ISBN only. If coverage matters more, resolve an Open
+ * Library cover ID by title and author when a book is picked — 10 of 27
+ * measured, but ~0.5s per lookup, and it needs an author check: unchecked, it
+ * matched Orwell's 1984 to someone else's adaptation.
+ */
+export function openLibraryCoverUrl(isbns: readonly string[] | null | undefined): string | null {
+  const clean = (isbns ?? [])
+    .map((isbn) => isbn.replace(/[^0-9X]/gi, "").toUpperCase())
+    .filter((isbn) => isbn.length === 10 || isbn.length === 13);
+  const isbn =
+    clean.find((candidate) => candidate.length === 13 && isEnglishIsbn(candidate)) ??
+    clean.find(isEnglishIsbn) ??
+    clean.find((candidate) => candidate.length === 13) ??
+    clean[0];
+  return isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false` : null;
+}
 
 /**
  * Turns Hardcover's raw Typesense payload into the shape the client picks from.
@@ -71,7 +111,7 @@ export function mapSearchResults(results: unknown) {
     externalId: String(document.id),
     title: document.title,
     authors: document.author_names ?? [],
-    coverImageUrl: document.image?.url ?? null,
+    coverImageUrl: openLibraryCoverUrl(document.isbns),
     description: document.description ?? null,
     releaseYear: document.release_year ?? null,
   }));
@@ -84,7 +124,14 @@ export const bookInputSchema = z.object({
   externalId: z.string().min(1),
   title: z.string().min(1),
   authors: z.array(z.string()).default([]),
-  coverImageUrl: z.string().nullish(),
+  // Only a link openLibraryCoverUrl built is kept. The book row is shared by
+  // every reader of the book, so an arbitrary URL from one client would be an
+  // image shown to all of them. Anything else — including an older client's
+  // Hardcover link — is stored as no cover rather than failing the folder.
+  coverImageUrl: z
+    .string()
+    .nullish()
+    .transform((url) => (url && OPEN_LIBRARY_COVER.test(url) ? url : null)),
   description: z.string().nullish(),
 });
 

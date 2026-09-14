@@ -11,6 +11,110 @@ Anything marked **Breaking** changes behaviour that an existing caller depends o
 
 ## Unreleased
 
+### Four tabs: Today, Library, Practise, You
+
+| Tab | What it holds |
+| --- | --- |
+| Today | Unchanged |
+| Library | Unchanged. Its magnifier opens Search, which is now a regular screen instead of a tab |
+| **Practise** (new) | How many words are waiting, "Practise all", a practise row per shelf with waiting words, and every mastered word |
+| **You** (new) | The signed-in name and email; words saved, mastered and shelves; and every setting |
+
+**Why Practise.** Saving words is half of the app and remembering them is the other half, but the review run was only reachable from buttons on Today and a book's page. It reads what already existed — `word.quiz` for what is waiting and `folder.list` for the shelves — plus one new procedure, `word.mastered`, which returns the reader's mastered words and their total. A mastered word leaves `quiz` for good, so without it the word had nowhere to be found. `db:smoke` checks it lists a mastered word, drops it when unmastered, and never shows another reader's.
+
+**Why You.** The settings were a screen behind a header gear. They are unchanged in behaviour and now live in this tab, so the gear is gone and `app/settings.tsx` is deleted. The counts are only numbers the data backs: there is no streak or reading progress, because nothing records either.
+
+Waiting counts come from one quiz page of 50, so past 50 the tab reads "50+" and a shelf's count can undercount. The `ponytail:` comment in `app/(tabs)/practise.tsx` marks it.
+
+### Shelves are private by default, and long-press opens their sheet
+
+**Breaking** for the aggregate: every shelf, including existing ones, is now **private** until its reader makes it public. A private shelf's words count toward nothing another reader sees.
+
+`folder.visibility` (`private` | `public`, migration `0005`) is read live by `word.suggestions`, so switching a shelf back to private takes back the words it had already contributed. The per-word `contributesToAggregate` snapshot still applies on top: a word counts only when both allow it. `folder.update` takes `visibility`, and only the shelf's owner can change it.
+
+Long-pressing a shelf no longer deletes it. It opens a bottom sheet with:
+
+| Choice | Meaning |
+| --- | --- |
+| Private (default) | Only the reader. Words saved there don't count toward other readers' suggestions |
+| Public | Words saved there count toward what other readers of the book see — counts only, never notes or definitions |
+| Delete shelf | Asks for confirmation, then removes the shelf and its words, as long-press used to |
+
+A public shelf shows "Public" next to its word count. `db:smoke` checks the default, that private words reach no one, that going private again hides them, and that another reader cannot change a shelf's visibility.
+
+### Word recommendations live only in the add-word form
+
+The app now recommends new words in exactly one place: the add-word form. There are two sources, and tapping any recommendation fills the Word field, so the definition card takes over and the word is saved like a typed one.
+
+| Source | When it shows | Where it comes from |
+| --- | --- | --- |
+| Readers of this book saved | Word field empty: the top five. Two letters typed: matches for them | `word.suggestions`, with `prefix` when typing. Counts only |
+| Suggested by AI for this book | Word field empty | `word.topicWords`: subject areas the book draws on, as tappable words |
+
+**Removed from the book page:** the "Others reading this also saved" list, with its one-tap Add rows. A book's page is the reader's own words now.
+
+**AI words.** Generated once per book by `suggestTopicWords`, stored on the new `book.topic_words` column (migration `0004_add_book_topic_words.sql`), locked by `book.topic_words_at`, and checked word by word against Datamuse. See [`word.topicWords`](/docs/api-layer#wordtopicwords).
+
+**A trade-off, chosen on purpose.** Listing other readers' words before anything is typed can show a word from later in the book. The previous entry limited them to completions for that reason; this one lets the reader browse them where they add words.
+
+### Add word completes other readers' words as you type
+
+Typing two letters into the Word field lists up to five words other readers of this book saved that start with them, each with its reader count. Tapping one fills the field, and the definition card takes over.
+
+The words it helps with most are the ones dictionaries do not have — names and words invented for the book — so completing one saves a misspelling. `word.suggestions` takes a new optional `prefix` for it, with LIKE's wildcards escaped so a typed `%` matches only a `%`. `db:smoke` checks both.
+
+**Why here and not a Discover tab.** A Discover tab briefly listed other readers' words and AI-picked topic words for every book being read. It was removed before release, for three reasons:
+
+- **It worked against the app's idea.** GlossNote logs words the reader met on the page. Topic words were generic, and nobody had met them.
+- **A browsable list of a book's words can spoil it.** A word someone saved near the end hints at what is coming. Completion only shows words starting with letters the reader typed — a word they just met.
+- **It spent an AI call per book** on words nobody asked for.
+
+The third tab is Search again. The book page's "Others reading this also saved" list is unchanged, since there the reader chooses to look.
+
+### Covers on every screen that names a book
+
+`CoverTile` (`components/book-cover.tsx`) is one cover-shaped tile: the Open Library cover when there is one, and the title set in type when there is not. Most books have no Open Library cover, so the fallback is designed rather than an empty box. Small tiles show the title's first letter instead, and the accent top edge stays on the book the reader is reading now.
+
+| Screen | Before | Now |
+| --- | --- | --- |
+| Home, "Currently reading" | Cover, title fallback | The same, through `CoverTile` |
+| Shelf (library) list | Cover, or an empty swatch | Cover, or the title |
+| Word search results | No cover | A small tile per result. `word.search` now fetches the folder's book |
+| A book's page | No cover | A cover beside the title, for shelves linked to a book |
+| A word's page | No cover | A small tile beside the shelf name |
+
+Freeform shelves are not books, so the book and word pages show no tile for them.
+
+### Book covers come from Open Library, by ISBN
+
+Hardcover's images are uploaded by Hardcover users, and Hardcover warns that anyone serving them publicly should expect copyright claims without a DMCA takedown policy. The app no longer reads Hardcover's `image` field. `mapSearchResults` builds an [Open Library Covers API](https://openlibrary.org/dev/docs/api/covers) link from the hit's ISBNs instead:
+
+```
+https://covers.openlibrary.org/b/isbn/<isbn>-M.jpg?default=false
+```
+
+**Picking the ISBN.** Hardcover lists every edition's ISBN in every language, in no useful order. `openLibraryCoverUrl` prefers an English edition (978-0, 978-1 or 979-8) and ISBN-13 over ISBN-10.
+
+**Coverage drops, and that was measured.** On 27 real search results, on 2026-09-13:
+
+| Cover source | Books with a cover | Why not |
+| --- | --- | --- |
+| Hardcover's own images (before) | 19 | User-uploaded, the reason for the change |
+| Open Library, English-edition ISBN (now) | 7 | — |
+| Open Library, the first ISBN in Hardcover's list | 5 | Often a foreign edition |
+| Open Library search by title and author | 10 | ~0.5 s per book, and it matched Orwell's *1984* to someone else's adaptation |
+| Open Library search for all of a page's ISBNs at once | 2 | Popular books have 800+ ISBNs, and the request is rejected as too long (414) |
+
+No request is made on the server. The phone loads the image, so Open Library's ISBN limit (100 per 5 minutes per IP) is spent per device. `?default=false` makes a missing cover a 404 instead of a blank white image, and `components/book-cover.tsx` falls back to the placeholder on that error.
+
+**The server only stores Open Library cover links.** `folder.create` used to store whatever `coverImageUrl` a client sent, on a `book` row every reader of that book shares. Anything that is not an Open Library cover link is now stored as no cover. `db:smoke` asserts it.
+
+<Callout type="warn">
+Open Library is a wiki, and its covers are uploaded by its users too. Changing the source is not a licence: publish a DMCA takedown policy before the app is public.
+</Callout>
+
+Books saved before this change keep their Hardcover link until someone picks that book again. On a database that has had real use, clear them with `update book set cover_image_url = null where cover_image_url like 'https://assets.hardcover.app/%';`.
+
 ### Definitions are read-only, and every word shows how it is used
 
 **Breaking** for `word.update`: it no longer accepts `definitionOverride`. An old client that still sends one has the field stripped, not stored.

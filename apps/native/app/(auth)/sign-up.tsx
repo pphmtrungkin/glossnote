@@ -14,7 +14,7 @@ import { SignUp } from "@/components/sign-up";
  */
 export default function SignUpScreen() {
   return (
-    <Container hasTopInset className="px-8 pt-16 pb-10">
+    <Container hasTopInset isRefreshable={false} className="px-8 pt-16 pb-10">
       <View className="flex-1 justify-between">
         <View className="flex-row items-center justify-between">
           <Text className="font-serif-semibold text-[12px] uppercase tracking-[2.2px] text-primary">

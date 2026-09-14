@@ -1,4 +1,5 @@
-import { isValidContext, parseContext } from "@better-vocab/domain";
+import type { TopicWordGroup } from "@better-vocab/db/schema/book";
+import { isValidContext, normalizeTerm, parseContext } from "@better-vocab/domain";
 import { env } from "@better-vocab/env/server";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -254,4 +255,61 @@ export async function defineTerm(term: string): Promise<DefinedTerm | "unknown" 
   if (!enrichment) return null;
 
   return { definition, ...enrichment };
+}
+
+const TOPIC_COUNT = 3;
+const WORDS_PER_TOPIC = 6;
+
+const TOPICS_PROMPT = [
+  "You pick vocabulary for a reading app. Given a book, name the subject areas its world and themes draw on,",
+  "and for each give words worth knowing for someone reading it.",
+  "",
+  `topics: ${TOPIC_COUNT} subject areas, each a short plain label of at most 4 words, e.g. "Desert ecology",`,
+  '"Regency manners", "Court politics".',
+  `words: ${WORDS_PER_TOPIC} single English words per topic, found in any ordinary dictionary, lowercase, no phrases.`,
+  "Pick words a curious adult reader may not know yet; skip everyday words like sand or king.",
+  "",
+  "Never give names, places, or words invented for this book or its franchise, and never draw on its plot,",
+  "characters or ending: readers see these mid-book, and a word from the story can spoil it.",
+].join("\n");
+
+const topicsSchema = z.object({
+  topics: z.array(z.object({ topic: z.string(), words: z.array(z.string()) })),
+});
+
+/**
+ * Subject areas a book draws on, each with words worth learning — the add-word
+ * form's AI suggestions, next to other readers' saved words.
+ *
+ * Returns null for any failure, like everything here. The words are only a
+ * model's suggestion: the caller checks each against Datamuse before a reader
+ * sees it, because the prompt alone does not keep invented words out (see
+ * resolveNewTerm in routers/dictionary.ts).
+ */
+export async function suggestTopicWords(book: {
+  title: string;
+  authors: string[];
+  description: string | null;
+}): Promise<TopicWordGroup[] | null> {
+  const prompt = [
+    `Title: ${book.title}`,
+    book.authors.length ? `Author: ${book.authors.join(", ")}` : null,
+    book.description ? `Description: ${book.description}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const object = await generate(book.title, topicsSchema, TOPICS_PROMPT, prompt);
+  if (!object) return null;
+
+  const topics = object.topics
+    .map(({ topic, words }) => ({
+      topic: topic.trim(),
+      // One plain word each: the Datamuse check and every term join match on
+      // the normalized form, and a phrase would match neither.
+      terms: [...new Set(words.map((w) => normalizeTerm(w)).filter((w) => /^[a-z]+(?:-[a-z]+)?$/.test(w)))],
+    }))
+    .filter((entry) => entry.topic && entry.terms.length > 0);
+
+  return topics.length > 0 ? topics : null;
 }

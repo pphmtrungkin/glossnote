@@ -1,26 +1,18 @@
 import type { AppRouter } from "@better-vocab/api/routers/index";
+import { FOLDER_VISIBILITIES, type FolderVisibility } from "@better-vocab/domain";
 import { Ionicons } from "@expo/vector-icons";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { inferRouterOutputs } from "@trpc/server";
 import { Link, router } from "expo-router";
-import {
-  Button,
-  Chip,
-  FieldError,
-  Input,
-  Label,
-  Spinner,
-  Surface,
-  TextField,
-  useThemeColor,
-  useToast,
-} from "heroui-native";
+import { BottomSheet, Button, Chip, Spinner, Surface, useThemeColor, useToast } from "heroui-native";
 import { useState } from "react";
-import { Alert, Image, Pressable, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import z from "zod";
 
+import { BookCover, CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
+import { TextField } from "@/components/text-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFolders } from "@/hooks/use-folders";
 import {
@@ -29,11 +21,26 @@ import {
   FOLDER_STATUS_LABELS,
   type FolderStatus,
 } from "@/lib/folder-status";
+import { getFormErrorMessage } from "@/lib/form-error";
 import { trpc } from "@/utils/trpc";
 
 // One result from Hardcover, shaped by book.search. `folder.create` takes this
 // object straight back and upserts it — the client never handles a book id.
 type BookHit = inferRouterOutputs<AppRouter>["book"]["search"][number];
+
+// What each choice in a shelf's sheet means, in the reader's terms. Only
+// counts ever cross between readers, so "public" never shows the shelf itself.
+const VISIBILITY_COPY: Record<FolderVisibility, { label: string; description: string }> = {
+  private: {
+    label: "Private",
+    description: "Only you. Words you save here don't count toward what other readers of this book see.",
+  },
+  public: {
+    label: "Public",
+    description:
+      "Words you save here count toward what other readers of this book see — as counts only, never your notes or definitions.",
+  },
+};
 
 const folderSchema = z.object({
   title: z.string().trim().min(1, "Give the folder a title"),
@@ -51,10 +58,15 @@ export default function ShelfScreen() {
   // freeform folder — either they skipped search, or they're offline and typed
   // a title by hand, which UserFlow §2 requires to keep working.
   const [pickedBook, setPickedBook] = useState<BookHit | null>(null);
+
+  // The shelf whose long-press sheet is open, by id, so the sheet always shows
+  // the latest row from `folder.list` rather than a copy taken at press time.
+  const [sheetFolderId, setSheetFolderId] = useState<string | null>(null);
   const [bookQuery, setBookQuery] = useState("");
   const debouncedBookQuery = useDebouncedValue(bookQuery);
 
   const folders = useFolders();
+  const sheetFolder = folders.data?.find((row) => row.id === sheetFolderId) ?? null;
   const shelfCount = folders.data?.length ?? 0;
   const wordTotal = folders.data?.reduce((total, row) => total + row.wordCount, 0) ?? 0;
 
@@ -154,13 +166,15 @@ export default function ShelfScreen() {
 
           {pickedBook ? (
             <Surface variant="secondary" className="flex-row items-center gap-3 mb-3 p-2 rounded-md">
-              {pickedBook.coverImageUrl ? (
-                <Image source={{ uri: pickedBook.coverImageUrl }} className="w-10 h-14 rounded" resizeMode="cover" />
-              ) : (
-                <View className="w-10 h-14 rounded items-center justify-center bg-surface-2">
-                  <Ionicons name="book-outline" size={18} color={mutedColor} />
-                </View>
-              )}
+              <BookCover
+                uri={pickedBook.coverImageUrl}
+                className="w-14 h-[84px] rounded"
+                fallback={
+                  <View className="w-14 h-[84px] rounded items-center justify-center bg-surface-2">
+                    <Ionicons name="book-outline" size={18} color={mutedColor} />
+                  </View>
+                }
+              />
               <View className="flex-1">
                 <Text className="text-foreground text-sm font-medium" numberOfLines={1}>
                   {pickedBook.title}
@@ -175,16 +189,14 @@ export default function ShelfScreen() {
             </Surface>
           ) : (
             <View className="mb-3">
-              <TextField>
-                <Label>Find the book</Label>
-                <Input
-                  value={bookQuery}
-                  onChangeText={setBookQuery}
-                  placeholder="Search Hardcover, or skip for a freeform folder"
-                  autoCorrect={false}
-                  returnKeyType="search"
-                />
-              </TextField>
+              <TextField
+                label="Find the book"
+                value={bookQuery}
+                onChangeText={setBookQuery}
+                placeholder="Search Hardcover, or skip for a freeform folder"
+                autoCorrect={false}
+                returnKeyType="search"
+              />
 
               {bookResults.isFetching && (
                 <View className="py-3 items-center">
@@ -202,13 +214,15 @@ export default function ShelfScreen() {
 
               {bookResults.data?.map((hit) => (
                 <Pressable key={hit.externalId} onPress={() => pickBook(hit)} className="flex-row items-center gap-3 py-2">
-                  {hit.coverImageUrl ? (
-                    <Image source={{ uri: hit.coverImageUrl }} className="w-8 h-12 rounded" resizeMode="cover" />
-                  ) : (
-                    <View className="w-8 h-12 rounded items-center justify-center bg-surface-2">
-                      <Ionicons name="book-outline" size={14} color={mutedColor} />
-                    </View>
-                  )}
+                  <BookCover
+                    uri={hit.coverImageUrl}
+                    className="w-12 h-[72px] rounded"
+                    fallback={
+                      <View className="w-12 h-[72px] rounded items-center justify-center bg-surface-2">
+                        <Ionicons name="book-outline" size={14} color={mutedColor} />
+                      </View>
+                    }
+                  />
                   <View className="flex-1">
                     <Text className="text-foreground text-sm" numberOfLines={1}>
                       {hit.title}
@@ -231,28 +245,25 @@ export default function ShelfScreen() {
               <View className="gap-3">
                 <form.Field name="title">
                   {(field) => (
-                    <TextField>
-                      <Label>Title</Label>
-                      <Input
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChangeText={field.handleChange}
-                        placeholder="Pride and Prejudice"
-                        autoFocus
-                        returnKeyType="done"
-                        onSubmitEditing={form.handleSubmit}
-                      />
-                      <FieldError isInvalid={!field.state.meta.isValid}>
-                        {field.state.meta.errors[0]?.message}
-                      </FieldError>
-                    </TextField>
+                    <TextField
+                      label="Title"
+                      error={getFormErrorMessage(field.state.meta.errors)}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChangeText={field.handleChange}
+                      placeholder="Pride and Prejudice"
+                      autoFocus
+                      returnKeyType="done"
+                      onSubmitEditing={form.handleSubmit}
+                    />
                   )}
                 </form.Field>
 
                 <form.Field name="status">
                   {(field) => (
                     <View>
-                      <Label>Status</Label>
+                      {/* A plain label, styled like TextField's, for a row of chips. */}
+                      <Text className="text-[13px] text-muted">Status</Text>
                       <View className="flex-row gap-2 mt-2">
                         {FOLDER_STATUSES.map((status) => (
                           <Chip
@@ -307,6 +318,74 @@ export default function ShelfScreen() {
         </Surface>
       )}
 
+      {/* ---- A shelf's long-press sheet ------------------------------------ */}
+      {/* Long-press opens this rather than deleting outright: who a shelf
+          reaches is the setting a reader needs per shelf, and delete sits
+          behind it with its own confirmation. */}
+      <BottomSheet
+        isOpen={sheetFolder !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setSheetFolderId(null);
+        }}
+      >
+        <BottomSheet.Portal>
+          <BottomSheet.Overlay />
+          <BottomSheet.Content>
+            {sheetFolder ? (
+              <View className="gap-3 pb-4">
+                <View className="mb-1">
+                  <BottomSheet.Title>{sheetFolder.title}</BottomSheet.Title>
+                  <BottomSheet.Description>Who this shelf&apos;s words reach.</BottomSheet.Description>
+                </View>
+
+                {FOLDER_VISIBILITIES.map((visibility) => {
+                  const isActive = sheetFolder.visibility === visibility;
+                  return (
+                    <Pressable
+                      key={visibility}
+                      onPress={() => {
+                        if (!isActive) updateStatus.mutate({ id: sheetFolder.id, visibility });
+                      }}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: isActive }}
+                      className={`flex-row items-start gap-3 rounded-card border p-3 ${
+                        isActive ? "border-primary" : "border-surface-strong"
+                      }`}
+                    >
+                      <Ionicons
+                        name={isActive ? "radio-button-on" : "radio-button-off"}
+                        size={20}
+                        color={isActive ? accentColor : mutedColor}
+                      />
+                      <View className="flex-1">
+                        <Text className="font-serif-semibold text-[15px] text-foreground">
+                          {VISIBILITY_COPY[visibility].label}
+                        </Text>
+                        <Text className="mt-0.5 text-[12.5px] leading-[18px] text-muted">
+                          {VISIBILITY_COPY[visibility].description}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  onPress={() => {
+                    const target = sheetFolder;
+                    setSheetFolderId(null);
+                    confirmDelete(target.id, target.title);
+                  }}
+                  accessibilityRole="button"
+                  className="mt-2 min-h-[46px] items-center justify-center rounded-card border border-danger"
+                >
+                  <Text className="font-serif-semibold text-[14px] text-danger">Delete shelf</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </BottomSheet.Content>
+        </BottomSheet.Portal>
+      </BottomSheet>
+
       <View className="mt-2">
         {folders.data?.map((folder) => (
           <View
@@ -315,26 +394,19 @@ export default function ShelfScreen() {
           >
             <Link href={{ pathname: "/folder/[id]", params: { id: folder.id } }} asChild>
               <Pressable
-                onLongPress={() => confirmDelete(folder.id, folder.title)}
+                onLongPress={() => setSheetFolderId(folder.id)}
                 className="flex-1 flex-row items-start gap-4"
               >
                 {/* The design's cover swatch, with the accent as its top edge.
                     The accent marks what the reader is reading now — every
                     other shelf gets the inert rule, which is the one-accent
                     rule applied to a list rather than a second colour. */}
-                <View
-                  className={`h-[68px] w-[46px] justify-end border-t-[3px] bg-surface-secondary ${
-                    folder.status === "reading" ? "border-primary" : "border-surface-strong"
-                  }`}
-                >
-                  {folder.book?.coverImageUrl ? (
-                    <Image
-                      source={{ uri: folder.book.coverImageUrl }}
-                      className="h-full w-full"
-                      resizeMode="cover"
-                    />
-                  ) : null}
-                </View>
+                <CoverTile
+                  uri={folder.book?.coverImageUrl}
+                  title={folder.title}
+                  accent={folder.status === "reading"}
+                  className="h-[96px] w-[64px]"
+                />
 
                 <View className="flex-1">
                   <Text
@@ -354,6 +426,7 @@ export default function ShelfScreen() {
                       rather than drawn against a number that isn't there. */}
                   <Text className="mt-2.5 text-[11.5px] text-muted">
                     {folder.wordCount === 1 ? "1 word" : `${folder.wordCount} words`}
+                    {folder.visibility === "public" ? " · Public" : ""}
                   </Text>
 
                   <View className="mt-2.5 flex-row gap-2">
@@ -390,7 +463,7 @@ export default function ShelfScreen() {
             <Text className="font-serif-semibold text-[14px] text-foreground">Add a book</Text>
           </Pressable>
           <Text className="mt-3 text-center text-[11px] text-muted">
-            Long-press a shelf to delete it.
+            Long-press a shelf to change who sees it, or to delete it.
           </Text>
         </>
       ) : null}

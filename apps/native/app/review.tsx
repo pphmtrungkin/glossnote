@@ -121,7 +121,11 @@ export default function ReviewScreen() {
           {/* The design promises "I'll bring them back in four days". There is
               no schedule behind that — `word.quiz` sorts by least recently
               reviewed, with no interval — so the copy says what's true. */}
-          <Text className="mt-2 max-w-[28ch] text-[15px] leading-[24px] text-muted">
+          {/* The measure is in points, not `ch`: React Native has no `ch` unit,
+              so `max-w-[28ch]` squeezed this into a column a few letters wide —
+              and that column grew tall enough to push the centred block, big
+              number first, up under the status bar. */}
+          <Text className="mt-2 max-w-[320px] text-[15px] leading-[24px] text-muted">
             {cards.length === 0
               ? "Nothing to practise yet. Words become cards once their definition has an example to work from."
               : "That's the set for now. The ones you've just seen go to the back of the queue."}

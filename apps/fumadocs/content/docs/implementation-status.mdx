@@ -45,7 +45,7 @@ The two forms (`components/sign-in.tsx`, `components/sign-up.tsx`) are plain Rea
 
 ## Creating a folder
 
-`folder.create`, `list`, `update` and `delete` are implemented ([API layer](/docs/api-layer)) and wired to the Shelf tab: list, create, status chips, and long-press to delete.
+`folder.create`, `list`, `update` and `delete` are implemented ([API layer](/docs/api-layer)) and wired to the Library tab: list, create, status chips, and a long-press sheet to make a shelf private or public, or to delete it.
 
 `folder.update` can also rename a folder. No screen calls that half yet.
 
@@ -102,7 +102,7 @@ Three affordances from the design are deliberately absent or disabled — see [W
 
 ## Browsing inventory
 
-`word.listByFolder` and `word.search` are implemented, behind the folder detail screen and the Search tab.
+`word.listByFolder` and `word.search` are implemented, behind the folder detail screen and the Search screen, which Library's magnifier opens.
 
 Tapping a word row opens `word/[id]`, the design's word screen. That screen renders `mastered`, the personal note, and the AI `exampleSentence` and `usageNote`.
 
@@ -114,7 +114,9 @@ Built.
 
 `word.suggestions` returns terms other readers of the book saved, minus your own words and minus anything already in your folder, ranked by the number of distinct readers ([API layer](/docs/api-layer)).
 
-The folder screen shows them and resolves each definition from the **local** dictionary. Counts are shared; definitions are not.
+The add-word form shows them, and it is the only place the app recommends words. With the Word field empty it lists the most-saved five; after two typed letters it completes from them. Tapping one fills the field, and the definition resolves like a typed word's. Counts are shared; definitions are not.
+
+The same form also shows AI-picked words for the book, grouped by subject, from `word.topicWords` ([API layer](/docs/api-layer#wordtopicwords)). The book's own page recommends nothing.
 
 It is deliberately not cached, and deliberately not a counter table.
 
@@ -126,7 +128,7 @@ It is deliberately not cached, and deliberately not a counter table.
 
 The run is fetched once and never refetched during the session. Stamping a review would reorder the deck while the reader is using it.
 
-Home and the folder screen both open it.
+Home, the folder screen and the Practise tab all open it. The Practise tab (`app/(tabs)/practise.tsx`) also lists every mastered word, from `word.mastered`.
 
 `word.update` toggles `mastered` (setting and clearing `masteredAt` with it) and takes `reviewed: true` to stamp `lastReviewedAt`.
 
@@ -138,7 +140,7 @@ The weekly digest is not built, and stays that way until there is push infrastru
 
 `preference.get` and `preference.update` are implemented ([API layer](/docs/api-layer#the-preference-router)), so the crowdsourced opt-out and the offline dictionary tier can both be changed.
 
-`app/settings.tsx` is the caller. It has grouped rows from the design canvas, covering the offline dictionary download, the aggregate opt-out, and sign-out.
+`app/(tabs)/you.tsx` is the caller. It has grouped rows from the design canvas, covering the offline dictionary download, the aggregate opt-out, and sign-out.
 
 Account deletion is enabled in Better Auth (password, or a session fresher than one day; every domain table cascades off `user.id`). But no screen calls it yet.
 
