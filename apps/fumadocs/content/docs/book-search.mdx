@@ -87,7 +87,7 @@ Hardcover lists every edition's ISBN, in every language, in no useful order. So 
 - **Only two hosts are stored.** `folder.create` keeps a `coverImageUrl` from `assets.hardcover.app` or an Open Library link of the shape above, and stores anything else as `null` — the `book` row is shared by every reader of that book, so one reader must not be able to put an arbitrary image on it. `db:smoke` checks it.
 
 <Callout type="warn">
-Hardcover's covers are uploaded by its users, and Hardcover asks that apps serving them publish a DMCA takedown policy. Open Library is a wiki whose covers are user uploads too. Publish one before the app is public, whichever source the covers come from.
+Hardcover's covers are uploaded by its users, and Hardcover asks that apps serving them publish a DMCA takedown policy. Open Library is a wiki whose covers are user uploads too. Publish one before the app is public, whichever source the covers come from. The draft and the checklist are on [DMCA takedown policy](/docs/dmca) — which records that it is **not published yet**.
 </Callout>
 
 ## Why `provider` and `externalId` are plain text

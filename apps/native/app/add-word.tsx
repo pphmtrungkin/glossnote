@@ -1,7 +1,7 @@
 import { normalizeTerm } from "@better-vocab/domain";
 import { Ionicons } from "@expo/vector-icons";
 import { useForm, useStore } from "@tanstack/react-form";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { Button, Chip, Spinner, Surface, useThemeColor, useToast } from "heroui-native";
@@ -34,7 +34,6 @@ function Kicker({ children }: { children: string }) {
 export default function AddWordScreen() {
   const { folderId } = useLocalSearchParams<{ folderId: string }>();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const foregroundColor = useThemeColor("foreground");
 
   // Saves through the shared capture path, which queues the word on this
@@ -43,16 +42,9 @@ export default function AddWordScreen() {
     onSettled: (outcome) => {
       if (outcome.status === "queued") {
         toast.show({ label: "Saved on this device — it will sync when you're back online." });
-        return;
       }
-      // A saved word leaves both recommendation lists for this folder.
-      return Promise.all([
-        queryClient.invalidateQueries({ queryKey: trpc.word.listByFolder.queryKey({ folderId }) }),
-        queryClient.invalidateQueries({ queryKey: trpc.word.suggestions.queryKey() }),
-        queryClient.invalidateQueries({ queryKey: trpc.word.topicWords.queryKey({ folderId }) }),
-        // A page moves the shelf's progress, which home and the shelf show.
-        queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() }),
-      ]);
+      // The lists a saved word changes are invalidated by useCaptureWord, so
+      // every capture path refreshes the same things.
     },
     onError: (error) => toast.show({ variant: "danger", label: error.message }),
   });

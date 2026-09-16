@@ -112,7 +112,7 @@ export default function ReviewScreen() {
           {/* The design sets this number as misregistered CMYK plates. React
               Native has no mix-blend-mode, and the inks are colours this app
               doesn't use, so it's set plainly at the same size. */}
-          <Text className="font-serif-semibold text-[88px] leading-[79px] text-foreground">
+          <Text className="font-serif-semibold text-[88px] leading-[96px] text-foreground">
             {cards.length}
           </Text>
           <Text className="mt-4 font-serif-semibold text-[26px] text-foreground">

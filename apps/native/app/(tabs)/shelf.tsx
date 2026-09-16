@@ -5,8 +5,18 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { inferRouterOutputs } from "@trpc/server";
 import { Link, router } from "expo-router";
-import { BottomSheet, Button, Chip, Spinner, Surface, useThemeColor, useToast } from "heroui-native";
-import { useState } from "react";
+import {
+  BottomSheet,
+  Button,
+  Chip,
+  Popover,
+  Spinner,
+  Surface,
+  useBottomSheetAwareHandlers,
+  useThemeColor,
+  useToast,
+} from "heroui-native";
+import { type ComponentProps, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import z from "zod";
 
@@ -47,12 +57,62 @@ const folderSchema = z.object({
   status: z.enum(FOLDER_STATUSES),
 });
 
+/** Results per page of book search — what the sheet shows above the fold. */
+const BOOK_PAGE_SIZE = 5;
+
+/**
+ * The design canvas's Search / Enter by hand / Scan segments.
+ *
+ * Scan is drawn in the canvas as a live camera reading an ISBN barcode. There
+ * is no camera behind it here, so it renders disabled — the same rule Today
+ * applies to Scan page and Say it.
+ */
+const ADD_MODES = [
+  { id: "search", label: "Search", isDisabled: false },
+  { id: "manual", label: "Enter by hand", isDisabled: false },
+  { id: "scan", label: "Scan", isDisabled: true },
+] as const;
+
+type AddMode = (typeof ADD_MODES)[number]["id"];
+
+/**
+ * A TextField inside a bottom sheet.
+ *
+ * `@gorhom/bottom-sheet` has to be told which input holds the keyboard, or the
+ * sheet will not move out of its way. `useBottomSheetAwareHandlers` is the hook
+ * HeroUI ships for that; outside a sheet it returns no-ops, so this stays a
+ * plain TextField everywhere else.
+ */
+function SheetTextField({
+  onFocus,
+  onBlur,
+  ...props
+}: ComponentProps<typeof TextField>) {
+  const sheet = useBottomSheetAwareHandlers();
+
+  return (
+    <TextField
+      {...props}
+      onFocus={(event) => {
+        sheet.onFocus(event);
+        onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        sheet.onBlur(event);
+        onBlur?.(event);
+      }}
+    />
+  );
+}
+
 export default function ShelfScreen() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const mutedColor = useThemeColor("muted");
   const accentColor = useThemeColor("accent");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [addMode, setAddMode] = useState<AddMode>("search");
+  const [bookPage, setBookPage] = useState(1);
 
   // The Hardcover hit the user picked, held until submit. Null means a
   // freeform folder — either they skipped search, or they're offline and typed
@@ -75,11 +135,25 @@ export default function ShelfScreen() {
   // Debounced and gated on a picked book: Hardcover's free tier allows 60
   // requests a minute with a burst of 10, so a request per keystroke would
   // burn the budget on one search.
+  const isSearchingBooks = !pickedBook && debouncedBookQuery.trim().length >= 2;
+
   const bookResults = useQuery({
-    ...trpc.book.search.queryOptions({ query: debouncedBookQuery.trim() }),
-    enabled: !pickedBook && debouncedBookQuery.trim().length >= 2,
+    // Five at a time: the sheet shows them above the fold, and a shorter
+    // list is a cheaper Hardcover response.
+    ...trpc.book.search.queryOptions({
+      query: debouncedBookQuery.trim(),
+      limit: BOOK_PAGE_SIZE,
+      page: bookPage,
+    }),
+    enabled: isSearchingBooks,
     retry: false,
   });
+
+  // Results are read through this, never off the query directly: the cache
+  // keeps the last search's books, so a reopened sheet — empty field, query
+  // disabled — would otherwise still render them. The debounce leaves the old
+  // phrase live for a moment after the field is cleared, which does the same.
+  const bookHits = isSearchingBooks ? (bookResults.data ?? []) : [];
 
   function invalidateFolders() {
     return queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() });
@@ -115,14 +189,17 @@ export default function ShelfScreen() {
 
   function closeForm() {
     setIsFormOpen(false);
+    setAddMode("search");
     setPickedBook(null);
     setBookQuery("");
+    setBookPage(1);
   }
 
   function pickBook(hit: BookHit) {
     setPickedBook(hit);
     form.setFieldValue("title", hit.title);
     setBookQuery("");
+    setBookPage(1);
   }
 
   function confirmDelete(id: string, title: string) {
@@ -133,7 +210,7 @@ export default function ShelfScreen() {
   }
 
   return (
-    <Container className="px-6 pb-8">
+    <Container className="w-full px-6">
       {/* The design's Library masthead: the counts are the page's only numbers,
           and both are real — `folder.list` carries a word count per row. */}
       <View className="flex-row items-start justify-between pt-3">
@@ -156,141 +233,319 @@ export default function ShelfScreen() {
         </Pressable>
       </View>
 
-      {isFormOpen ? (
-        <Pressable onPress={closeForm} className="mt-4 self-start">
-          <Text className="font-serif-semibold text-[12px] text-muted">Cancel</Text>
-        </Pressable>
-      ) : null}
+      {/* The new-folder form, presented as a bottom sheet.
 
-      {isFormOpen && (
-        <Surface variant="secondary" className="p-4 rounded-lg mb-4">
-          <Text className="text-foreground font-serif-medium mb-4">New folder</Text>
+          A Popover in its default `popover` presentation is an anchored bubble
+          sized to its trigger, which is the wrong container for this: two text
+          inputs, an async result list and a keyboard that would shove a
+          collision-positioned bubble around the screen. `bottom-sheet` is the
+          same component with a presentation that fits a phone form, and it is
+          the pattern the long-press sheet below already uses.
 
-          {pickedBook ? (
-            <Surface variant="secondary" className="flex-row items-center gap-3 mb-3 p-2 rounded-md">
-              <BookCover
-                uri={pickedBook.coverImageUrl}
-                className="w-14 h-[84px] rounded"
-                fallback={
-                  <View className="w-14 h-[84px] rounded items-center justify-center bg-surface-2">
-                    <Ionicons name="book-outline" size={18} color={mutedColor} />
-                  </View>
-                }
-              />
-              <View className="flex-1">
-                <Text className="text-foreground text-sm font-serif-medium" numberOfLines={1}>
-                  {pickedBook.title}
+          Controlled rather than triggered: the form opens from two places (this
+          screen's "Add a book" and the empty state's button), so `isFormOpen`
+          stays the one source of truth and there is no Popover.Trigger. */}
+      <Popover
+        presentation="bottom-sheet"
+        isOpen={isFormOpen}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) closeForm();
+        }}
+      >
+        <Popover.Portal>
+          <Popover.Overlay />
+          {/* `extend` grows the sheet by the keyboard's height rather than
+              sliding it, so the field being typed into stays put. */}
+          <Popover.Content
+            presentation="bottom-sheet"
+            keyboardBehavior="extend"
+            contentContainerClassName="px-6 pb-8"
+          >
+            {/* The canvas's header: a tracked kicker over the title, with the
+                close cross opposite it. Sizes are the canvas's own — 10px at
+                .18em, and 24px at -.02em. */}
+            <View className="mb-4 flex-row items-start justify-between">
+              <View>
+                <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.8px] text-muted">
+                  New shelf
                 </Text>
-                <Text className="font-serif text-muted text-xs" numberOfLines={1}>
-                  {pickedBook.authors.join(", ") || "Unknown author"}
+                <Text className="mt-2 font-serif-semibold text-[24px] leading-[28px] tracking-[-0.48px] text-foreground">
+                  Add a book
                 </Text>
               </View>
-              <Button size="sm" variant="tertiary" onPress={() => setPickedBook(null)}>
-                <Button.Label className="font-serif-medium">Change</Button.Label>
-              </Button>
-            </Surface>
-          ) : (
-            <View className="mb-3">
-              <TextField
-                label="Find the book"
-                value={bookQuery}
-                onChangeText={setBookQuery}
-                placeholder="Search Hardcover, or skip for a freeform folder"
-                autoCorrect={false}
-                returnKeyType="search"
-              />
+              <Pressable
+                onPress={closeForm}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={10}
+                className="-mr-2 -mt-1 p-2 active:opacity-60"
+              >
+                <Ionicons name="close" size={20} color={mutedColor} />
+              </Pressable>
+            </View>
 
-              {bookResults.isFetching && (
-                <View className="py-3 items-center">
-                  <Spinner size="sm" />
+            <View className="mb-4 flex-row overflow-hidden rounded-card border border-surface-strong">
+              {ADD_MODES.map((mode) => {
+                const isActive = !mode.isDisabled && addMode === mode.id;
+                return (
+                  <Pressable
+                    key={mode.id}
+                    disabled={mode.isDisabled}
+                    onPress={() => {
+                      setAddMode(mode.id);
+                      // A query left behind would keep searching under a tab
+                      // that doesn't show results.
+                      if (mode.id !== "search") setBookQuery("");
+                    }}
+                    accessibilityRole="tab"
+                    accessibilityState={{
+                      selected: isActive,
+                      disabled: mode.isDisabled,
+                    }}
+                    className={`min-h-[42px] flex-1 items-center justify-center ${
+                      isActive ? "bg-primary" : ""
+                    } ${mode.isDisabled ? "opacity-40" : ""}`}
+                  >
+                    <Text
+                      className={`font-serif-medium text-[13px] ${
+                        isActive ? "text-primary-content" : "text-foreground"
+                      }`}
+                    >
+                      {mode.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {pickedBook ? (
+              <Surface
+                variant="secondary"
+                className="flex-row items-center gap-3 mb-3 p-2 rounded-md"
+              >
+                <BookCover
+                  uri={pickedBook.coverImageUrl}
+                  className="w-14 h-[84px] rounded"
+                  fallback={
+                    <View className="w-14 h-[84px] rounded items-center justify-center bg-surface-2">
+                      <Ionicons
+                        name="book-outline"
+                        size={18}
+                        color={mutedColor}
+                      />
+                    </View>
+                  }
+                />
+                <View className="flex-1">
+                  <Text
+                    className="text-foreground text-sm font-serif-medium"
+                    numberOfLines={1}
+                  >
+                    {pickedBook.title}
+                  </Text>
+                  <Text
+                    className="font-serif text-muted text-xs"
+                    numberOfLines={1}
+                  >
+                    {pickedBook.authors.join(", ") || "Unknown author"}
+                  </Text>
+                </View>
+                <Button
+                  size="sm"
+                  variant="tertiary"
+                  onPress={() => setPickedBook(null)}
+                >
+                  <Button.Label className="font-serif-medium">
+                    Change
+                  </Button.Label>
+                </Button>
+              </Surface>
+            ) : addMode === "search" ? (
+              <View className="mb-3">
+                <SheetTextField
+                  label="Title or author"
+                  value={bookQuery}
+                  onChangeText={(text) => {
+                    setBookQuery(text);
+                    // A new phrase starts at its own first page.
+                    setBookPage(1);
+                  }}
+                  placeholder="Piranesi, Ishiguro…"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+
+                {bookResults.isFetching && (
+                  <View className="py-3 items-center">
+                    <Spinner size="sm" />
+                  </View>
+                )}
+
+                {/* Search needs connectivity; typing a title below always works,
+                    which is the offline fallback UserFlow §2 asks for. */}
+                {bookResults.error && (
+                  <Text className="font-serif text-muted text-xs mt-2">
+                    {bookResults.error.message} You can still type a title
+                    below.
+                  </Text>
+                )}
+
+                {bookHits.map((hit) => (
+                  <Pressable
+                    key={hit.externalId}
+                    onPress={() => pickBook(hit)}
+                    className="flex-row items-center gap-3 py-2"
+                  >
+                    <BookCover
+                      uri={hit.coverImageUrl}
+                      className="w-[34px] h-[50px] rounded"
+                      fallback={
+                        <View className="w-[34px] h-[50px] rounded items-center justify-center bg-surface-2">
+                          <Ionicons
+                            name="book-outline"
+                            size={12}
+                            color={mutedColor}
+                          />
+                        </View>
+                      }
+                    />
+                    <View className="flex-1">
+                      <Text
+                        className="font-serif text-foreground text-sm"
+                        numberOfLines={1}
+                      >
+                        {hit.title}
+                      </Text>
+                      <Text
+                        className="font-serif text-muted text-xs"
+                        numberOfLines={1}
+                      >
+                        {[hit.authors.join(", "), hit.releaseYear]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+
+                {isSearchingBooks && !bookResults.isFetching && bookHits.length === 0 && bookPage === 1 && (
+                  <Text className="font-serif text-muted text-xs mt-2">
+                    Nothing matched that. You can still put it on the shelf
+                    yourself.
+                  </Text>
+                )}
+
+                {/* Paging. A short page is the last one — Hardcover's total
+                    never reaches the client, and inferring it from the page
+                    size costs no extra field. */}
+                {isSearchingBooks && (bookPage > 1 || bookHits.length === BOOK_PAGE_SIZE) ? (
+                  <View className="mt-2 flex-row items-center justify-between">
+                    <Pressable
+                      onPress={() => setBookPage((page) => Math.max(1, page - 1))}
+                      disabled={bookPage === 1}
+                      accessibilityRole="button"
+                      accessibilityLabel="Previous results"
+                      hitSlop={10}
+                      className={`p-1 ${bookPage === 1 ? "opacity-30" : "active:opacity-60"}`}
+                    >
+                      <Ionicons name="chevron-back" size={18} color={mutedColor} />
+                    </Pressable>
+
+                    <Text className="font-serif text-[11.5px] text-muted">Page {bookPage}</Text>
+
+                    <Pressable
+                      onPress={() => setBookPage((page) => page + 1)}
+                      disabled={bookHits.length < BOOK_PAGE_SIZE}
+                      accessibilityRole="button"
+                      accessibilityLabel="More results"
+                      hitSlop={10}
+                      className={`p-1 ${
+                        bookHits.length < BOOK_PAGE_SIZE ? "opacity-30" : "active:opacity-60"
+                      }`}
+                    >
+                      <Ionicons name="chevron-forward" size={18} color={mutedColor} />
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <View className="gap-3">
+                  {/* Search mode has no title field: picking a result names the
+                      shelf after the book (see pickBook). The Field stays
+                      mounted and renders nothing, so the title it already holds
+                      survives a switch between the two modes. */}
+                  <form.Field name="title">
+                    {(field) =>
+                      addMode === "manual" ? (
+                        <SheetTextField
+                          label="Title"
+                          error={getFormErrorMessage(field.state.meta.errors)}
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChangeText={field.handleChange}
+                          placeholder="Pride and Prejudice"
+                          returnKeyType="done"
+                          onSubmitEditing={form.handleSubmit}
+                        />
+                      ) : null
+                    }
+                  </form.Field>
+
+                  <form.Field name="status">
+                    {(field) => (
+                      <View>
+                        {/* A plain label, styled like TextField's, for a row of chips. */}
+                        <Text className="font-serif text-[13px] text-muted">
+                          Status
+                        </Text>
+                        <View className="flex-row gap-2 mt-2">
+                          {FOLDER_STATUSES.map((status) => (
+                            <Chip
+                              key={status}
+                              size="sm"
+                              color={FOLDER_STATUS_COLORS[status]}
+                              variant={
+                                field.state.value === status
+                                  ? "primary"
+                                  : "secondary"
+                              }
+                              onPress={() => field.handleChange(status)}
+                            >
+                              <Chip.Label className="font-serif-medium">
+                                {FOLDER_STATUS_LABELS[status]}
+                              </Chip.Label>
+                            </Chip>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                  </form.Field>
+
+                  <Button
+                    onPress={form.handleSubmit}
+                    // Nothing is typed in search mode, so the button waits for a
+                    // picked book rather than failing on a title the reader
+                    // cannot see.
+                    isDisabled={isSubmitting || (addMode === "search" && !pickedBook)}
+                    className="mt-1"
+                  >
+                    {isSubmitting ? (
+                      <Spinner size="sm" color="default" />
+                    ) : (
+                      <Button.Label className="font-serif-medium">
+                        Put it on the shelf
+                      </Button.Label>
+                    )}
+                  </Button>
                 </View>
               )}
-
-              {/* Search needs connectivity; typing a title below always works,
-                  which is the offline fallback UserFlow §2 asks for. */}
-              {bookResults.error && (
-                <Text className="font-serif text-muted text-xs mt-2">
-                  {bookResults.error.message} You can still type a title below.
-                </Text>
-              )}
-
-              {bookResults.data?.map((hit) => (
-                <Pressable key={hit.externalId} onPress={() => pickBook(hit)} className="flex-row items-center gap-3 py-2">
-                  <BookCover
-                    uri={hit.coverImageUrl}
-                    className="w-12 h-[72px] rounded"
-                    fallback={
-                      <View className="w-12 h-[72px] rounded items-center justify-center bg-surface-2">
-                        <Ionicons name="book-outline" size={14} color={mutedColor} />
-                      </View>
-                    }
-                  />
-                  <View className="flex-1">
-                    <Text className="font-serif text-foreground text-sm" numberOfLines={1}>
-                      {hit.title}
-                    </Text>
-                    <Text className="font-serif text-muted text-xs" numberOfLines={1}>
-                      {[hit.authors.join(", "), hit.releaseYear].filter(Boolean).join(" · ")}
-                    </Text>
-                  </View>
-                </Pressable>
-              ))}
-
-              {bookResults.data?.length === 0 && (
-                <Text className="font-serif text-muted text-xs mt-2">No matches. Type a title below instead.</Text>
-              )}
-            </View>
-          )}
-
-          <form.Subscribe selector={(state) => state.isSubmitting}>
-            {(isSubmitting) => (
-              <View className="gap-3">
-                <form.Field name="title">
-                  {(field) => (
-                    <TextField
-                      label="Title"
-                      error={getFormErrorMessage(field.state.meta.errors)}
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChangeText={field.handleChange}
-                      placeholder="Pride and Prejudice"
-                      autoFocus
-                      returnKeyType="done"
-                      onSubmitEditing={form.handleSubmit}
-                    />
-                  )}
-                </form.Field>
-
-                <form.Field name="status">
-                  {(field) => (
-                    <View>
-                      {/* A plain label, styled like TextField's, for a row of chips. */}
-                      <Text className="font-serif text-[13px] text-muted">Status</Text>
-                      <View className="flex-row gap-2 mt-2">
-                        {FOLDER_STATUSES.map((status) => (
-                          <Chip
-                            key={status}
-                            size="sm"
-                            color={FOLDER_STATUS_COLORS[status]}
-                            variant={field.state.value === status ? "primary" : "secondary"}
-                            onPress={() => field.handleChange(status)}
-                          >
-                            <Chip.Label className="font-serif-medium">{FOLDER_STATUS_LABELS[status]}</Chip.Label>
-                          </Chip>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                </form.Field>
-
-                <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-                  {isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label className="font-serif-medium">Create folder</Button.Label>}
-                </Button>
-              </View>
-            )}
-          </form.Subscribe>
-        </Surface>
-      )}
+            </form.Subscribe>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover>
 
       {folders.isPending && (
         <View className="items-center py-10">
@@ -377,32 +632,35 @@ export default function ShelfScreen() {
                 {/* Captures with a page move this forward on their own; here
                     the reader can set any page, a re-read included. Empty
                     clears it. */}
-                <View className="mt-2 flex-row items-end gap-3">
-                  <View className="w-[110px]">
-                    <TextField
-                      label="Current page"
-                      value={pageDraft ?? (sheetFolder.currentPage ? String(sheetFolder.currentPage) : "")}
-                      onChangeText={(text) => setPageDraft(text.replace(/[^0-9]/g, ""))}
-                      placeholder="—"
-                      keyboardType="number-pad"
-                      maxLength={5}
-                    />
-                  </View>
-                  <Text className="mb-3.5 flex-1 font-serif text-[13px] text-muted">
-                    {sheetFolder.book?.pages ? `of ${sheetFolder.book.pages}` : ""}
-                  </Text>
+                <View className="mt-2">
+                  {/* The book's own length rides in the label: the row that
+                      used to hold it beside a 110px field is gone, and the
+                      field now spans the sheet. */}
+                  <SheetTextField
+                    label={
+                      sheetFolder.book?.pages
+                        ? `Current page of ${sheetFolder.book.pages}`
+                        : "Current page"
+                    }
+                    value={pageDraft ?? (sheetFolder.currentPage ? String(sheetFolder.currentPage) : "")}
+                    onChangeText={(text) => setPageDraft(text.replace(/[^0-9]/g, ""))}
+                    placeholder="—"
+                    keyboardType="number-pad"
+                    maxLength={5}
+                    className="w-full"
+                  />
+
                   {pageDraft !== null ? (
-                    <Pressable
+                    <Button
                       onPress={() => {
                         const page = Number.parseInt(pageDraft, 10);
                         updateStatus.mutate({ id: sheetFolder.id, currentPage: page >= 1 ? page : null });
                         setPageDraft(null);
                       }}
-                      accessibilityRole="button"
-                      className="mb-3.5"
+                      className="mt-2"
                     >
-                      <Text className="font-serif-semibold text-[13px] text-primary">Save page</Text>
-                    </Pressable>
+                      <Button.Label className="font-serif-medium">Save page</Button.Label>
+                    </Button>
                   ) : null}
                 </View>
 
@@ -459,8 +717,9 @@ export default function ShelfScreen() {
                   ) : null}
 
                   {/* The design pairs the count with a reading-progress bar.
-                      Nothing tracks a page position, so the bar is left out
-                      rather than drawn against a number that isn't there. */}
+                      Home draws that bar for the book being read now; a list
+                      row keeps to the count, so the shelf stays one column of
+                      numbers rather than a row of competing ones. */}
                   <Text className="font-serif mt-2.5 text-[11.5px] text-muted">
                     {folder.wordCount === 1 ? "1 word" : `${folder.wordCount} words`}
                     {folder.visibility === "public" ? " · Public" : ""}

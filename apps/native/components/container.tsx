@@ -56,7 +56,7 @@ export function Container({
 
   return (
     <AnimatedView
-      className={cn("flex-1 bg-background", className)}
+      className="flex-1 bg-background"
       style={{
         paddingTop: hasTopInset ? insets.top : undefined,
         paddingBottom: insets.bottom,
@@ -64,7 +64,11 @@ export function Container({
       {...props}
     >
       {isScrollable ? (
+        // Full width, with the screen's own padding on the content inside it.
+        // Padding the ScrollView instead would draw the scroll indicator at the
+        // ScrollView's edge — inset from the screen, over the content.
         <ScrollView
+          className="w-full"
           contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
           // `automatic` is iOS-only, so it used to inset the scrollable screens
@@ -86,10 +90,16 @@ export function Container({
           }
           {...scrollViewProps}
         >
-          {children}
+          {/* The screen's own padding lives here, inside the full-width scroll
+              area. `flexGrow` rather than `flex-1`: the content must fill the
+              screen when it is short (what centred screens rely on) without
+              being squashed to fit when it is long. */}
+          <View style={{ flexGrow: 1 }} className={cn("w-full", className)}>
+            {children}
+          </View>
         </ScrollView>
       ) : (
-        <View className="flex-1">{children}</View>
+        <View className={cn("h-full w-full flex-1", className)}>{children}</View>
       )}
     </AnimatedView>
   );

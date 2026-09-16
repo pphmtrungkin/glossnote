@@ -1,0 +1,70 @@
+---
+title: DMCA takedown policy
+description: Owed before the app is public, because it serves user-uploaded book covers — not written yet
+---
+
+<Callout type="error">
+**This policy does not exist yet.** The app already serves user-uploaded cover images. Nothing below is published anywhere, and the placeholders are unfilled. This page is the reminder and the draft, not the policy.
+</Callout>
+
+## Why this is owed
+
+The app shows book covers from two sources, and **both are uploaded by members of the public**, not licensed by the app:
+
+| Source | What it is | Used for |
+| --- | --- | --- |
+| `assets.hardcover.app` | Covers uploaded by Hardcover's users | Every cover, when the hit has an image |
+| `covers.openlibrary.org` | Open Library is a wiki; its covers are uploaded by its users too | The fallback, when a hit has no image |
+
+Hardcover's own API documentation asks this directly: if you use images from their API and serve them publicly, **make sure a DMCA takedown policy is listed on your site**. Switching the fallback to Open Library did not remove the obligation, because Open Library's covers are user uploads as well. See [Book search](/docs/book-search#covers-come-from-hardcover-with-open-library-as-the-fallback) for how the links are built.
+
+The exposure is small but real: a publisher whose cover was uploaded by someone else has no way to reach you, and their next step is the App Store rather than an email.
+
+## What has to be true before launch
+
+- [ ] A **designated agent** to receive notices — a name, a postal address, a phone number and an email address. It may be you.
+- [ ] The agent **registered with the U.S. Copyright Office** ([dmca.copyright.gov](https://dmca.copyright.gov)). There is a fee, currently $6, and registration must be renewed every three years. Registration is what buys the safe harbour; publishing the page alone does not.
+- [ ] The policy **published at a stable public URL**, reachable without signing in.
+- [ ] That URL **linked from the app** — the You tab, beside the other account links — and from the App Store listing's support/privacy fields.
+- [ ] A **repeat-infringer policy** stated, and actually applied: accounts that repeatedly infringe get terminated.
+- [ ] A written **counter-notice** path, so someone whose image was removed can dispute it.
+
+<Callout type="warn">
+This page is written by an engineer, not a lawyer, and it is not legal advice. Have the final text checked before it is published, especially the agent registration and the repeat-infringer terms.
+</Callout>
+
+## Draft to fill in
+
+Replace every `[BRACKETED]` value. Keep the structure: the elements below are the ones §512(c)(3) actually requires a notice to contain, and a policy that omits them invites malformed notices.
+
+> ## Copyright and takedown policy
+>
+> GlossNote shows book cover images supplied by third-party services, including Hardcover and Open Library. These images are uploaded by users of those services. We do not host or licence them, and we make no claim of ownership over them.
+>
+> If you own the copyright in an image or other material shown in GlossNote and believe it is used without authorisation, send a notice to our designated agent:
+>
+> **Designated agent:** [NAME]
+> **Email:** [EMAIL]
+> **Postal address:** [ADDRESS]
+> **Phone:** [PHONE]
+>
+> Your notice must include:
+>
+> 1. A physical or electronic signature of the copyright owner, or a person authorised to act on their behalf.
+> 2. Identification of the copyrighted work you claim has been infringed.
+> 3. Identification of the material you say is infringing, with enough detail for us to locate it — for a cover image, the book title and the screen it appears on.
+> 4. Your contact details: address, telephone number and email address.
+> 5. A statement that you believe in good faith that the use is not authorised by the copyright owner, its agent, or the law.
+> 6. A statement that the information in the notice is accurate and, under penalty of perjury, that you are authorised to act on behalf of the copyright owner.
+>
+> On receiving a valid notice we will remove the material from GlossNote promptly, and where the image comes from a third-party service we will also pass the notice to that service.
+>
+> **Counter-notice.** If your material was removed and you believe that was a mistake or a misidentification, send a counter-notice to the same agent, including your contact details, identification of the removed material and where it appeared, a statement under penalty of perjury that you believe in good faith it was removed by mistake, and your consent to the jurisdiction of the federal court for your district (or, outside the United States, [JURISDICTION]).
+>
+> **Repeat infringers.** We terminate the accounts of users who repeatedly infringe copyright.
+>
+> _Last updated: [DATE]_
+
+## When it can be dropped
+
+Only by not serving other people's images: shipping covers you have a licence to use, or showing the title set in type instead. `components/book-cover.tsx` already falls back to type, so a cover-free build is a small change rather than a rewrite — the reason it is worth keeping that fallback working.

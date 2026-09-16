@@ -16,8 +16,8 @@ export const HARDCOVER_PROVIDER = "hardcover";
 // Hardcover allows at most ONE `search` query per request, so this is a single
 // top-level field and nothing may be batched alongside it.
 const SEARCH_QUERY = `
-  query SearchBooks($query: String!, $perPage: Int!) {
-    search(query: $query, query_type: "Book", per_page: $perPage, page: 1) {
+  query SearchBooks($query: String!, $perPage: Int!, $page: Int!) {
+    search(query: $query, query_type: "Book", per_page: $perPage, page: $page) {
       results
     }
   }
@@ -196,7 +196,15 @@ export const bookRouter = router({
     // every reader. The client debounces, so a real search costs one request
     // per typed phrase; this is the ceiling for a client that stops.
     .use(rateLimit({ name: "book.search", max: 20, windowSeconds: 60 }))
-    .input(z.object({ query: z.string().trim().min(2), limit: z.number().int().min(1).max(25).default(10) }))
+    .input(
+      z.object({
+        query: z.string().trim().min(2),
+        limit: z.number().int().min(1).max(25).default(10),
+        // Paging through results, one Hardcover request per page. Capped
+        // because a caller walking to page 500 spends the shared token's quota.
+        page: z.number().int().min(1).max(20).default(1),
+      }),
+    )
     .query(async ({ input }) => {
       if (!env.HARDCOVER_API_TOKEN) {
         throw new TRPCError({
@@ -213,7 +221,7 @@ export const bookRouter = router({
         },
         body: JSON.stringify({
           query: SEARCH_QUERY,
-          variables: { query: input.query, perPage: input.limit },
+          variables: { query: input.query, perPage: input.limit, page: input.page },
         }),
       });
 
