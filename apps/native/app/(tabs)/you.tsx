@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 
 import { Container } from "@/components/container";
+import { ReadingThemeSwatches } from "@/components/reading-theme-picker";
 import { useFolders } from "@/hooks/use-folders";
 import { authClient } from "@/lib/auth-client";
 import {
@@ -64,8 +65,8 @@ function Row({
       className="flex-row items-center gap-3.5 border-b border-surface-strong py-3.5"
     >
       <View className="flex-1">
-        <Text className="text-[15.5px] text-foreground">{label}</Text>
-        {hint ? <Text className="mt-0.5 text-[12.5px] text-muted">{hint}</Text> : null}
+        <Text className="font-serif text-[15.5px] text-foreground">{label}</Text>
+        {hint ? <Text className="font-serif mt-0.5 text-[12.5px] text-muted">{hint}</Text> : null}
       </View>
       {isBusy ? (
         <Spinner size="sm" />
@@ -84,7 +85,7 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
     <View className="flex-1 items-center">
       <Text className="font-serif-semibold text-[24px] leading-[28px] text-foreground">{value ?? "–"}</Text>
-      <Text className="mt-1 text-[10px] uppercase tracking-[1.2px] text-muted">{label}</Text>
+      <Text className="font-serif mt-1 text-[10px] uppercase tracking-[1.2px] text-muted">{label}</Text>
     </View>
   );
 }
@@ -182,7 +183,7 @@ export default function YouScreen() {
       <Text className="mt-3 font-serif-semibold text-[27px] leading-[31px] tracking-[-0.6px] text-foreground">
         {user?.name || "You"}
       </Text>
-      {user?.email ? <Text className="mt-1 text-[13.5px] text-muted">{user.email}</Text> : null}
+      {user?.email ? <Text className="font-serif mt-1 text-[13.5px] text-muted">{user.email}</Text> : null}
 
       {/* ---- What they have ------------------------------------------------ */}
       <View className="mt-6 mb-8 flex-row border-y border-surface-strong py-4">
@@ -190,6 +191,13 @@ export default function YouScreen() {
         <Stat label="Mastered" value={mastered.data?.total} />
         <Stat label="Shelves" value={folders?.length} />
       </View>
+
+      <Group title="Appearance">
+        {/* The app's only page-colour control. It applies everywhere and is
+            remembered on this device between launches. */}
+        <Text className="font-serif mb-3 text-[12.5px] text-muted">Page colour, everywhere in the app.</Text>
+        <ReadingThemeSwatches />
+      </Group>
 
       <Group title="Offline">
         {!packUrl ? (
@@ -269,7 +277,7 @@ export default function YouScreen() {
         />
       </Group>
 
-      <Text className="text-[12.5px] leading-[20px] text-muted">
+      <Text className="font-serif text-[12.5px] leading-[20px] text-muted">
         Words you save stay yours. Only how often a word was saved crosses between readers, and only from shelves
         you make public.
       </Text>

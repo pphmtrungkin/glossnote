@@ -24,7 +24,7 @@ It is **not** the same thing as the Postgres `dictionaryEntry` cache in [Data mo
 
 ## The local tables
 
-They are defined in `apps/native/lib/local-db.ts`. A migration creates them through `SQLiteProvider`'s `onInit` callback, which is wired up in `apps/native/app/_layout.tsx` and runs at every app start. The current schema version is `user_version` 3.
+They are defined in `apps/native/lib/local-db.ts`. A migration creates them through `SQLiteProvider`'s `onInit` callback, which is wired up in `apps/native/app/_layout.tsx` and runs at every app start. The current schema version is `user_version` 4, which added `pending_sync.page`.
 
 `onInit` runs two steps, and the order matters:
 
@@ -233,7 +233,7 @@ Failures are swallowed on purpose. An app that cannot open its own asset should 
 <Callout type="warn">
 The asset is deliberately **not** passed to `SQLiteProvider` as `assetSource`. That was the original plan, and it is a trap.
 
-The asset contains only the `dictionary` table. But the build script stamps `PRAGMA user_version = 3` on it. So `migrateLocalDb` would return early and never create `pending_sync` or `app_setting`. A device that opened the asset directly would crash on the first theme save.
+The asset contains only the `dictionary` table. But the build script stamps the current `PRAGMA user_version` (3 when this was written, 4 now) on it. So `migrateLocalDb` would return early and never create `pending_sync` or `app_setting`. A device that opened the asset directly would crash on the first theme save.
 
 Merging costs one copy of the rows and keeps `local-db.ts` the only owner of the schema. It also works on an app upgrade, where `assetSource` does nothing because the database already exists.
 </Callout>

@@ -1,9 +1,7 @@
 import { Tabs } from "expo-router";
-import { useCallback } from "react";
 import { StyleSheet, type ColorValue } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
-import { ReadingThemePicker } from "@/components/reading-theme-picker";
 import { usePalette } from "@/lib/palette";
 
 /**
@@ -43,16 +41,14 @@ function TabIcon({ d, color, focused }: { d: string; color: ColorValue; focused:
 export default function TabLayout() {
   const palette = usePalette();
 
-  // The Kindle-style "Aa" page-colour picker lives in the tab header.
-  const renderThemePicker = useCallback(() => <ReadingThemePicker />, []);
-
   return (
     <Tabs
       screenOptions={{
         headerStyle: { backgroundColor: palette.base },
         headerTintColor: palette.ink,
         headerTitleStyle: { color: palette.ink, fontFamily: "SourceSerif4_600SemiBold" },
-        headerRight: renderThemePicker,
+        // No header controls: the page colour is chosen on the You tab, with
+        // the rest of the settings.
 
         // The accent marks where the reader is, and nothing else in the bar —
         // the scheme spends it on one thing per screen.
@@ -79,6 +75,9 @@ export default function TabLayout() {
         name="index"
         options={{
           title: "GlossNote",
+          // Today draws its own first row — the wordmark and the date — as the
+          // design canvas does, so the navigation header would repeat it.
+          headerShown: false,
           tabBarLabel: "Today",
           tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.today} color={color} focused={focused} />,
         }}

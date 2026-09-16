@@ -251,6 +251,8 @@ Two details are worth knowing:
 
 `create` and `createMany` both call one private function, `captureWord`. That is on purpose. The rules below — especially "a client never writes `dictionary_entry`" — must hold for the live save **and** for the offline flush. One function means they cannot drift apart.
 
+Both take an optional `page`. `captureWord` stores it on the word and moves the folder's `currentPage` forward with `greatest(...)`, so an offline flush moves reading progress exactly like a live save. `folder.update` takes `currentPage` too — any page, or `null` to clear it.
+
 Here is what `captureWord` does:
 
 1. **Check that the folder belongs to the caller.** While reading that row, also read its `bookId`. We copy that value onto the new `word` row. (`word.bookId` is a deliberate copy; the [data model](/docs/data-model) explains why.)

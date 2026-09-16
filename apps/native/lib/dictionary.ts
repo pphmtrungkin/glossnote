@@ -2,7 +2,7 @@ import type { DictionaryTier, NormalizedTerm } from "@better-vocab/domain";
 import type { SQLiteDatabase } from "expo-sqlite";
 
 /**
- * Storage for on-device definitions: one read, one write, over the single
+ * Storage for on-device definitions: a lookup, a completion and one write, over the single
  * `dictionary` table that holds all three tiers (see local-db.ts).
  *
  * Callers pass a term that has already been through `normalizeTerm` — the
@@ -53,6 +53,41 @@ export async function readLocalDefinition(
     exampleSentence: row.example_sentence,
     tier: row.source,
   };
+}
+
+/**
+ * Up to `limit` distinct dictionary terms starting with `prefix`, in dictionary
+ * order — what the add-word field completes from.
+ *
+ * A range, not `LIKE`: `term >= prefix AND term < prefix + U+FFFF` is answered
+ * from the (term, source, rank) index alone, already in order, where
+ * `LIKE 'x%'` would scan the table (SQLite only uses an index for LIKE under
+ * case-sensitive matching). Alphabetical rather than shortest-first: measured,
+ * shortest-first filled "persp" with perspex and perspire and pushed out
+ * perspicacious, while dictionary order still puts a base word before its
+ * derivatives. Every tier counts, so a word looked up online once completes
+ * offline too.
+ */
+export async function completeTerm(
+  db: SQLiteDatabase,
+  prefix: NormalizedTerm,
+  limit: number,
+): Promise<string[]> {
+  if (!prefix) return [];
+  const rows = await db.getAllAsync<{ term: string }>(
+    `SELECT DISTINCT term
+       FROM dictionary
+      WHERE term >= ? AND term < ?
+      ORDER BY term
+      LIMIT ?`,
+    prefix,
+    // U+FFFF sorts after every character a term can hold, so this is "every
+    // term that starts with the prefix". Written as an escape: an invisible
+    // character in the source is one careless edit away from matching nothing.
+    `${prefix}\uffff`,
+    limit,
+  );
+  return rows.map((row) => row.term);
 }
 
 /**

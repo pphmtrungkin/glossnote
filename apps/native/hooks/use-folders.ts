@@ -17,8 +17,9 @@ export type FolderRow = {
   status: "reading" | "finished" | "misc";
   visibility: "private" | "public";
   bookId: string | null;
+  currentPage: number | null;
   wordCount: number;
-  book: { title: string; authors: string[]; coverImageUrl: string | null } | null;
+  book: { title: string; authors: string[]; coverImageUrl: string | null; pages: number | null } | null;
 };
 
 export function useFolders() {

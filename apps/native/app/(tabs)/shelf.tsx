@@ -62,6 +62,8 @@ export default function ShelfScreen() {
   // The shelf whose long-press sheet is open, by id, so the sheet always shows
   // the latest row from `folder.list` rather than a copy taken at press time.
   const [sheetFolderId, setSheetFolderId] = useState<string | null>(null);
+  // The sheet's page field while it's being edited; null shows the saved page.
+  const [pageDraft, setPageDraft] = useState<string | null>(null);
   const [bookQuery, setBookQuery] = useState("");
   const debouncedBookQuery = useDebouncedValue(bookQuery);
 
@@ -139,7 +141,7 @@ export default function ShelfScreen() {
           <Text className="font-serif-semibold text-[29px] leading-[33px] tracking-[-0.6px] text-foreground">
             Library
           </Text>
-          <Text className="mt-1 text-[13.5px] text-muted">
+          <Text className="font-serif mt-1 text-[13.5px] text-muted">
             {shelfCount === 1 ? "1 shelf" : `${shelfCount} shelves`} ·{" "}
             {wordTotal === 1 ? "1 word" : `${wordTotal} words`}
           </Text>
@@ -162,7 +164,7 @@ export default function ShelfScreen() {
 
       {isFormOpen && (
         <Surface variant="secondary" className="p-4 rounded-lg mb-4">
-          <Text className="text-foreground font-medium mb-4">New folder</Text>
+          <Text className="text-foreground font-serif-medium mb-4">New folder</Text>
 
           {pickedBook ? (
             <Surface variant="secondary" className="flex-row items-center gap-3 mb-3 p-2 rounded-md">
@@ -176,15 +178,15 @@ export default function ShelfScreen() {
                 }
               />
               <View className="flex-1">
-                <Text className="text-foreground text-sm font-medium" numberOfLines={1}>
+                <Text className="text-foreground text-sm font-serif-medium" numberOfLines={1}>
                   {pickedBook.title}
                 </Text>
-                <Text className="text-muted text-xs" numberOfLines={1}>
+                <Text className="font-serif text-muted text-xs" numberOfLines={1}>
                   {pickedBook.authors.join(", ") || "Unknown author"}
                 </Text>
               </View>
               <Button size="sm" variant="tertiary" onPress={() => setPickedBook(null)}>
-                <Button.Label>Change</Button.Label>
+                <Button.Label className="font-serif-medium">Change</Button.Label>
               </Button>
             </Surface>
           ) : (
@@ -207,7 +209,7 @@ export default function ShelfScreen() {
               {/* Search needs connectivity; typing a title below always works,
                   which is the offline fallback UserFlow §2 asks for. */}
               {bookResults.error && (
-                <Text className="text-muted text-xs mt-2">
+                <Text className="font-serif text-muted text-xs mt-2">
                   {bookResults.error.message} You can still type a title below.
                 </Text>
               )}
@@ -224,10 +226,10 @@ export default function ShelfScreen() {
                     }
                   />
                   <View className="flex-1">
-                    <Text className="text-foreground text-sm" numberOfLines={1}>
+                    <Text className="font-serif text-foreground text-sm" numberOfLines={1}>
                       {hit.title}
                     </Text>
-                    <Text className="text-muted text-xs" numberOfLines={1}>
+                    <Text className="font-serif text-muted text-xs" numberOfLines={1}>
                       {[hit.authors.join(", "), hit.releaseYear].filter(Boolean).join(" · ")}
                     </Text>
                   </View>
@@ -235,7 +237,7 @@ export default function ShelfScreen() {
               ))}
 
               {bookResults.data?.length === 0 && (
-                <Text className="text-muted text-xs mt-2">No matches. Type a title below instead.</Text>
+                <Text className="font-serif text-muted text-xs mt-2">No matches. Type a title below instead.</Text>
               )}
             </View>
           )}
@@ -263,7 +265,7 @@ export default function ShelfScreen() {
                   {(field) => (
                     <View>
                       {/* A plain label, styled like TextField's, for a row of chips. */}
-                      <Text className="text-[13px] text-muted">Status</Text>
+                      <Text className="font-serif text-[13px] text-muted">Status</Text>
                       <View className="flex-row gap-2 mt-2">
                         {FOLDER_STATUSES.map((status) => (
                           <Chip
@@ -273,7 +275,7 @@ export default function ShelfScreen() {
                             variant={field.state.value === status ? "primary" : "secondary"}
                             onPress={() => field.handleChange(status)}
                           >
-                            <Chip.Label>{FOLDER_STATUS_LABELS[status]}</Chip.Label>
+                            <Chip.Label className="font-serif-medium">{FOLDER_STATUS_LABELS[status]}</Chip.Label>
                           </Chip>
                         ))}
                       </View>
@@ -282,7 +284,7 @@ export default function ShelfScreen() {
                 </form.Field>
 
                 <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-                  {isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label>Create folder</Button.Label>}
+                  {isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label className="font-serif-medium">Create folder</Button.Label>}
                 </Button>
               </View>
             )}
@@ -298,9 +300,9 @@ export default function ShelfScreen() {
 
       {folders.error && (
         <Surface variant="secondary" className="p-4 rounded-lg">
-          <Text className="text-danger mb-3">{folders.error.message}</Text>
+          <Text className="font-serif text-danger mb-3">{folders.error.message}</Text>
           <Button size="sm" variant="tertiary" onPress={() => folders.refetch()}>
-            <Button.Label>Try again</Button.Label>
+            <Button.Label className="font-serif-medium">Try again</Button.Label>
           </Button>
         </Surface>
       )}
@@ -308,12 +310,12 @@ export default function ShelfScreen() {
       {folders.data?.length === 0 && !isFormOpen && (
         <Surface variant="secondary" className="p-6 rounded-lg items-center">
           <Ionicons name="library-outline" size={32} color={mutedColor} />
-          <Text className="text-foreground font-medium mt-3 mb-1">Your shelf is empty</Text>
-          <Text className="text-muted text-sm text-center mb-4">
+          <Text className="text-foreground font-serif-medium mt-3 mb-1">Your shelf is empty</Text>
+          <Text className="font-serif text-muted text-sm text-center mb-4">
             Create a folder for what you&apos;re reading, then log the words you look up.
           </Text>
           <Button size="sm" onPress={() => setIsFormOpen(true)}>
-            <Button.Label>Create your first folder</Button.Label>
+            <Button.Label className="font-serif-medium">Create your first folder</Button.Label>
           </Button>
         </Surface>
       )}
@@ -325,7 +327,10 @@ export default function ShelfScreen() {
       <BottomSheet
         isOpen={sheetFolder !== null}
         onOpenChange={(isOpen) => {
-          if (!isOpen) setSheetFolderId(null);
+          if (!isOpen) {
+            setSheetFolderId(null);
+            setPageDraft(null);
+          }
         }}
       >
         <BottomSheet.Portal>
@@ -334,8 +339,8 @@ export default function ShelfScreen() {
             {sheetFolder ? (
               <View className="gap-3 pb-4">
                 <View className="mb-1">
-                  <BottomSheet.Title>{sheetFolder.title}</BottomSheet.Title>
-                  <BottomSheet.Description>Who this shelf&apos;s words reach.</BottomSheet.Description>
+                  <BottomSheet.Title className="font-serif-semibold">{sheetFolder.title}</BottomSheet.Title>
+                  <BottomSheet.Description className="font-serif">Who this shelf&apos;s words reach.</BottomSheet.Description>
                 </View>
 
                 {FOLDER_VISIBILITIES.map((visibility) => {
@@ -361,13 +366,45 @@ export default function ShelfScreen() {
                         <Text className="font-serif-semibold text-[15px] text-foreground">
                           {VISIBILITY_COPY[visibility].label}
                         </Text>
-                        <Text className="mt-0.5 text-[12.5px] leading-[18px] text-muted">
+                        <Text className="font-serif mt-0.5 text-[12.5px] leading-[18px] text-muted">
                           {VISIBILITY_COPY[visibility].description}
                         </Text>
                       </View>
                     </Pressable>
                   );
                 })}
+
+                {/* Captures with a page move this forward on their own; here
+                    the reader can set any page, a re-read included. Empty
+                    clears it. */}
+                <View className="mt-2 flex-row items-end gap-3">
+                  <View className="w-[110px]">
+                    <TextField
+                      label="Current page"
+                      value={pageDraft ?? (sheetFolder.currentPage ? String(sheetFolder.currentPage) : "")}
+                      onChangeText={(text) => setPageDraft(text.replace(/[^0-9]/g, ""))}
+                      placeholder="—"
+                      keyboardType="number-pad"
+                      maxLength={5}
+                    />
+                  </View>
+                  <Text className="mb-3.5 flex-1 font-serif text-[13px] text-muted">
+                    {sheetFolder.book?.pages ? `of ${sheetFolder.book.pages}` : ""}
+                  </Text>
+                  {pageDraft !== null ? (
+                    <Pressable
+                      onPress={() => {
+                        const page = Number.parseInt(pageDraft, 10);
+                        updateStatus.mutate({ id: sheetFolder.id, currentPage: page >= 1 ? page : null });
+                        setPageDraft(null);
+                      }}
+                      accessibilityRole="button"
+                      className="mb-3.5"
+                    >
+                      <Text className="font-serif-semibold text-[13px] text-primary">Save page</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
 
                 <Pressable
                   onPress={() => {
@@ -416,7 +453,7 @@ export default function ShelfScreen() {
                     {folder.title}
                   </Text>
                   {folder.book?.authors?.length ? (
-                    <Text className="mt-0.5 text-[12.5px] text-muted" numberOfLines={1}>
+                    <Text className="font-serif mt-0.5 text-[12.5px] text-muted" numberOfLines={1}>
                       {folder.book.authors.join(", ")}
                     </Text>
                   ) : null}
@@ -424,7 +461,7 @@ export default function ShelfScreen() {
                   {/* The design pairs the count with a reading-progress bar.
                       Nothing tracks a page position, so the bar is left out
                       rather than drawn against a number that isn't there. */}
-                  <Text className="mt-2.5 text-[11.5px] text-muted">
+                  <Text className="font-serif mt-2.5 text-[11.5px] text-muted">
                     {folder.wordCount === 1 ? "1 word" : `${folder.wordCount} words`}
                     {folder.visibility === "public" ? " · Public" : ""}
                   </Text>
@@ -442,7 +479,7 @@ export default function ShelfScreen() {
                             if (!isActive) updateStatus.mutate({ id: folder.id, status });
                           }}
                         >
-                          <Chip.Label>{FOLDER_STATUS_LABELS[status]}</Chip.Label>
+                          <Chip.Label className="font-serif-medium">{FOLDER_STATUS_LABELS[status]}</Chip.Label>
                         </Chip>
                       );
                     })}
@@ -462,7 +499,7 @@ export default function ShelfScreen() {
           >
             <Text className="font-serif-semibold text-[14px] text-foreground">Add a book</Text>
           </Pressable>
-          <Text className="mt-3 text-center text-[11px] text-muted">
+          <Text className="font-serif mt-3 text-center text-[11px] text-muted">
             Long-press a shelf to change who sees it, or to delete it.
           </Text>
         </>

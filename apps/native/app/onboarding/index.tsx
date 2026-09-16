@@ -60,7 +60,7 @@ const STEPS: Step[] = [
 function CatchingFigure() {
   return (
     <View className="mt-8 bg-surface p-[18px]">
-      <Text className="text-[14.5px] leading-[25px] text-muted">
+      <Text className="font-serif text-[14.5px] leading-[25px] text-muted">
         She was{" "}
         <Text className="font-serif-semibold text-foreground underline decoration-primary-soft">
           solicitous
@@ -90,13 +90,13 @@ function LearningFigure() {
       <Text className="font-serif-semibold text-[19px] leading-[22px] text-foreground">
         solicitous
       </Text>
-      <Text className="text-[14.5px] leading-[22px] text-muted">
+      <Text className="font-serif text-[14.5px] leading-[22px] text-muted">
         Showing interest or concern for someone's health or wellbeing.
       </Text>
       <Text className="font-italic text-[14.5px] leading-[23px] text-foreground">
         "She was solicitous about the journey, asking twice whether I had eaten."
       </Text>
-      <Text className="text-[13px] leading-[20px] text-muted">
+      <Text className="font-serif text-[13px] leading-[20px] text-muted">
         Warmer than "worried" — it's attention paid on someone's behalf.
       </Text>
     </View>
@@ -121,7 +121,7 @@ function KeepingFigure() {
             </Text>
             <View className="mb-1 flex-1 border-b border-dotted border-surface-strong" />
             <Text
-              className={`text-[11px] uppercase tracking-[0.6px] ${
+              className={`font-serif text-[11px] uppercase tracking-[0.6px] ${
                 row.state === "learning"
                   ? "text-state-learning"
                   : row.state === "steady"
@@ -134,7 +134,7 @@ function KeepingFigure() {
           </View>
           {/* The design puts a page number here too. Omitted — nothing records
               one. The book is real: `word.bookId` is snapshotted at capture. */}
-          <Text className="mt-0.5 text-[12px] text-muted">{row.book}</Text>
+          <Text className="font-serif mt-0.5 text-[12px] text-muted">{row.book}</Text>
         </View>
       ))}
     </View>
@@ -170,7 +170,7 @@ export default function TourScreen() {
             className="-mr-3"
             onPress={() => void finishOnboarding()}
           >
-            <Button.Label className="text-[13px] text-muted">Skip</Button.Label>
+            <Button.Label className="font-serif-medium text-[13px] text-muted">Skip</Button.Label>
           </Button>
         </View>
 
@@ -181,7 +181,7 @@ export default function TourScreen() {
           <Text className="mb-3.5 font-serif-semibold text-[33px] leading-[36px] tracking-[-0.66px] text-foreground">
             {step.headline}
           </Text>
-          <Text className="max-w-[300px] text-[15.5px] leading-[25px] text-muted">{step.body}</Text>
+          <Text className="font-serif max-w-[300px] text-[15.5px] leading-[25px] text-muted">{step.body}</Text>
 
           <Figure />
         </View>
@@ -205,7 +205,7 @@ export default function TourScreen() {
               session lands. */}
           {index > 0 ? (
             <Button variant="ghost" className="ml-auto" onPress={() => setIndex(index - 1)}>
-              <Button.Label className="text-[14px] text-muted">Back</Button.Label>
+              <Button.Label className="font-serif-medium text-[14px] text-muted">Back</Button.Label>
             </Button>
           ) : (
             <View className="ml-auto" />

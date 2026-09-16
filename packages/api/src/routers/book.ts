@@ -42,6 +42,7 @@ const hitSchema = z.object({
     isbns: z.array(z.string()).nullish(),
     description: z.string().nullish(),
     release_year: z.number().nullish(),
+    pages: z.number().nullish(),
   }),
 });
 
@@ -114,6 +115,7 @@ export function mapSearchResults(results: unknown) {
     coverImageUrl: openLibraryCoverUrl(document.isbns),
     description: document.description ?? null,
     releaseYear: document.release_year ?? null,
+    pages: document.pages ?? null,
   }));
 }
 
@@ -133,6 +135,7 @@ export const bookInputSchema = z.object({
     .nullish()
     .transform((url) => (url && OPEN_LIBRARY_COVER.test(url) ? url : null)),
   description: z.string().nullish(),
+  pages: z.number().int().positive().nullish(),
 });
 
 export type BookInput = z.infer<typeof bookInputSchema>;
@@ -154,6 +157,7 @@ export async function upsertBook(input: BookInput): Promise<string> {
       authors: input.authors,
       coverImageUrl: input.coverImageUrl ?? null,
       description: input.description ?? null,
+      pages: input.pages ?? null,
     })
     .onConflictDoUpdate({
       target: [book.provider, book.externalId],
@@ -164,6 +168,7 @@ export async function upsertBook(input: BookInput): Promise<string> {
         authors: input.authors,
         coverImageUrl: input.coverImageUrl ?? null,
         description: input.description ?? null,
+        pages: input.pages ?? null,
       },
     })
     .returning({ id: book.id });

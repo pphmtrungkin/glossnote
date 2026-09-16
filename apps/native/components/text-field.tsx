@@ -45,15 +45,18 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
 
   // One size class per field, never two: which of two `text-[…]` classes wins
   // is decided by stylesheet order, not by their order in the string.
+  // One size class per field, and one font face with it: two `font-serif…`
+  // classes on the same input would be settled by stylesheet order, not by
+  // which comes last in the string.
   const sizeClassName = multiline
-    ? "min-h-24 py-2.5 text-[15px]"
+    ? "min-h-24 py-2.5 font-serif text-[15px]"
     : large
       ? "min-h-14 font-serif-semibold text-[19px]"
-      : "min-h-12 text-[15px]";
+      : "min-h-12 font-serif text-[15px]";
 
   return (
     <View className="gap-1.5">
-      {label ? <Text className="text-[13px] text-muted">{label}</Text> : null}
+      {label ? <Text className="font-serif text-[13px] text-muted">{label}</Text> : null}
 
       <View className="justify-center">
         <TextInput
@@ -95,7 +98,7 @@ export const TextField = forwardRef<TextInput, Props>(function TextField(
         ) : null}
       </View>
 
-      {error ? <Text className="text-[12px] text-danger">{error}</Text> : null}
+      {error ? <Text className="font-serif text-[12px] text-danger">{error}</Text> : null}
     </View>
   );
 });

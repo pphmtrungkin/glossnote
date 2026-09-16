@@ -110,6 +110,9 @@ export const folderRouter = router({
         // Private by default. Public lets this shelf's words count toward
         // what other readers of the book see (word.suggestions).
         visibility: folderVisibility.optional(),
+        // Any page, backwards included (a re-read); null clears it. Not checked
+        // against book.pages, which is one edition's count.
+        currentPage: z.number().int().min(0).max(100000).nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -119,6 +122,7 @@ export const folderRouter = router({
           ...(input.title !== undefined && { title: input.title }),
           ...(input.status !== undefined && { status: input.status }),
           ...(input.visibility !== undefined && { visibility: input.visibility }),
+          ...(input.currentPage !== undefined && { currentPage: input.currentPage }),
           // Also keeps the SET clause non-empty when a caller sends neither.
           updatedAt: new Date(),
         })

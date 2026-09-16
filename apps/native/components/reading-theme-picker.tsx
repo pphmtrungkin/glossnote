@@ -1,6 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { Dialog, useThemeColor } from "heroui-native";
-import { useState } from "react";
+import { useThemeColor } from "heroui-native";
 import { Platform, Pressable, Text, View } from "react-native";
 
 import {
@@ -36,7 +35,7 @@ function Swatch({
         style={{
           backgroundColor: meta.page,
           // The selected swatch gets an accent ring; the rest keep a hairline
-          // outline so the white page stays visible against a white sheet.
+          // outline so the white page stays visible against a white screen.
           borderWidth: isSelected ? 3 : 1,
           borderColor: isSelected ? accentColor : separatorColor,
         }}
@@ -45,7 +44,7 @@ function Swatch({
           Aa
         </Text>
       </View>
-      <Text className={isSelected ? "text-foreground text-xs" : "text-muted text-xs"}>
+      <Text className={isSelected ? "font-serif text-foreground text-xs" : "font-serif text-muted text-xs"}>
         {meta.label}
       </Text>
     </Pressable>
@@ -53,46 +52,32 @@ function Swatch({
 }
 
 /**
- * Kindle's "Aa" menu: the header control that switches the page colour.
- * Replaces the scaffold's binary light/dark toggle.
+ * The row of page-colour swatches, the selected one ringed — the app's one
+ * place to change the page colour, on the You tab. It used to sit behind an
+ * "Aa" button in the tab header too; that button was removed, so the choice
+ * lives with the rest of the settings.
+ *
+ * Picking a swatch applies the theme everywhere at once and stores it on this
+ * device (see app-theme-context).
  */
-export function ReadingThemePicker() {
-  const [isOpen, setIsOpen] = useState(false);
+export function ReadingThemeSwatches() {
   const { currentTheme, setTheme } = useAppTheme();
 
   return (
-    <Dialog isOpen={isOpen} onOpenChange={setIsOpen}>
-      <Dialog.Trigger asChild>
-        <Pressable accessibilityRole="button" accessibilityLabel="Reading settings" className="px-2.5">
-          <Text className="text-foreground text-lg font-serif-semibold">Aa</Text>
-        </Pressable>
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Overlay />
-        <Dialog.Content className="p-6 w-[90%] max-w-sm">
-          <Dialog.Title className="mb-1">Page colour</Dialog.Title>
-          <Dialog.Description className="mb-5">
-            Applies everywhere in the app, and is remembered between launches.
-          </Dialog.Description>
-
-          <View className="flex-row justify-between">
-            {READING_THEMES.map((theme) => (
-              <Swatch
-                key={theme}
-                theme={theme}
-                isSelected={currentTheme === theme}
-                onPress={() => {
-                  if (Platform.OS === "ios") {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  setTheme(theme);
-                }}
-              />
-            ))}
-          </View>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog>
+    <View className="flex-row justify-between">
+      {READING_THEMES.map((theme) => (
+        <Swatch
+          key={theme}
+          theme={theme}
+          isSelected={currentTheme === theme}
+          onPress={() => {
+            if (Platform.OS === "ios") {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            setTheme(theme);
+          }}
+        />
+      ))}
+    </View>
   );
 }

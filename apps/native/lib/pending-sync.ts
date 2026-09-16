@@ -21,6 +21,7 @@ export type Capture = {
   term: string;
   definition?: string;
   captureMethod: CaptureMethod;
+  page?: number;
 };
 
 type QueuedRow = {
@@ -29,6 +30,7 @@ type QueuedRow = {
   term: string;
   definition: string | null;
   capture_method: string;
+  page: number | null;
 };
 
 /** Matches the server's own FLUSH_LIMIT — a larger batch would be rejected. */
@@ -58,8 +60,8 @@ function localId() {
 export async function enqueueCapture(db: SQLiteDatabase, capture: Capture) {
   await db.runAsync(
     `INSERT INTO pending_sync
-       (local_id, folder_id, term, definition, definition_source, capture_method, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (local_id, folder_id, term, definition, definition_source, capture_method, page, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     localId(),
     capture.folderId,
     capture.term,
@@ -68,6 +70,7 @@ export async function enqueueCapture(db: SQLiteDatabase, capture: Capture) {
     // A definition resolved while offline can only have come off the device.
     "bundled",
     capture.captureMethod,
+    capture.page ?? null,
     Date.now(),
   );
 }
@@ -93,7 +96,7 @@ export async function flushPendingCaptures(db: SQLiteDatabase) {
 
   for (;;) {
     const rows = await db.getAllAsync<QueuedRow>(
-      `SELECT local_id, folder_id, term, definition, capture_method
+      `SELECT local_id, folder_id, term, definition, capture_method, page
          FROM pending_sync
         ORDER BY created_at
         LIMIT ?`,
@@ -108,6 +111,7 @@ export async function flushPendingCaptures(db: SQLiteDatabase) {
         term: row.term,
         definition: row.definition ?? undefined,
         captureMethod: row.capture_method as CaptureMethod,
+        page: row.page ?? undefined,
       })),
     });
 

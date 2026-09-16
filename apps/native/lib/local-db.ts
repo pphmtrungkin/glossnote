@@ -119,5 +119,11 @@ export async function migrateLocalDb(db: SQLiteDatabase) {
     version = 3;
   }
 
+  if (version === 3) {
+    // The page a queued capture was met on, replayed to word.createMany.
+    await db.execAsync(`ALTER TABLE pending_sync ADD COLUMN page INTEGER`);
+    version = 4;
+  }
+
   await db.execAsync(`PRAGMA user_version = ${version}`);
 }

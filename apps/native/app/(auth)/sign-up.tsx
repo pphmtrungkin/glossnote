@@ -26,7 +26,7 @@ export default function SignUpScreen() {
             className="-mr-3"
             onPress={() => router.replace("/sign-in")}
           >
-            <Button.Label className="text-[13px] text-muted">Sign in</Button.Label>
+            <Button.Label className="font-serif-medium text-[13px] text-muted">Sign in</Button.Label>
           </Button>
         </View>
 
@@ -34,7 +34,7 @@ export default function SignUpScreen() {
           <Text className="font-serif-semibold text-[32px] leading-[35px] tracking-[-0.64px] text-foreground">
             Make a shelf of your own.
           </Text>
-          <Text className="max-w-[300px] text-[15px] leading-[23px] text-muted">
+          <Text className="font-serif max-w-[300px] text-[15px] leading-[23px] text-muted">
             An account keeps your words when you change phones, and lets you
             share a shelf if you ever want to.
           </Text>
@@ -42,7 +42,7 @@ export default function SignUpScreen() {
 
         <View className="gap-4">
           <SignUp />
-          <Text className="text-[12px] leading-[18px] text-muted">
+          <Text className="font-serif text-[12px] leading-[18px] text-muted">
             By continuing you agree to the terms and privacy notice.
           </Text>
         </View>

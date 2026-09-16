@@ -92,7 +92,7 @@ export default function OnboardingDictionaryScreen() {
           <Text className="mb-3.5 font-serif-semibold text-[33px] leading-[36px] tracking-[-0.66px] text-foreground">
             Keep a dictionary on the phone?
           </Text>
-          <Text className="max-w-[310px] text-[15.5px] leading-[25px] text-muted">
+          <Text className="font-serif max-w-[310px] text-[15.5px] leading-[25px] text-muted">
             Looking a word up needs signal. Meanings don't have to. With the dictionary on the
             phone, a word caught on a train still comes back with its definition.
           </Text>
@@ -104,7 +104,7 @@ export default function OnboardingDictionaryScreen() {
               There is no refresh mechanism, so that row is gone. */}
           {install ? (
             <View className="mt-8 flex-row items-center gap-2.5 border-l-2 border-primary bg-primary-tint px-3.5 py-3">
-              <Text className="flex-1 text-[13.5px] leading-[19px] text-foreground">
+              <Text className="font-serif flex-1 text-[13.5px] leading-[19px] text-foreground">
                 On the phone. {install.rows.toLocaleString()} words · {formatBytes(install.bytes)}.
                 Lookups will work with no signal.
               </Text>
@@ -117,8 +117,8 @@ export default function OnboardingDictionaryScreen() {
                 <View className="h-[3px] bg-primary" style={{ width: `${percent ?? 0}%` }} />
               </View>
               <View className="mt-2.5 flex-row justify-between">
-                <Text className="text-[12.5px] text-muted">Downloading dictionary…</Text>
-                <Text className="text-[12.5px] text-muted">
+                <Text className="font-serif text-[12.5px] text-muted">Downloading dictionary…</Text>
+                <Text className="font-serif text-[12.5px] text-muted">
                   {percent === null ? "Starting…" : `${percent}%`}
                 </Text>
               </View>
@@ -145,7 +145,7 @@ export default function OnboardingDictionaryScreen() {
               </Button>
             </>
           )}
-          <Text className="text-center text-[12px] leading-[18px] text-muted">
+          <Text className="font-serif text-center text-[12px] leading-[18px] text-muted">
             You can add or remove it later in Settings.
           </Text>
         </View>

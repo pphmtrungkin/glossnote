@@ -88,7 +88,7 @@ export default function FolderScreen() {
           </Text>
           {/* The design's meta line ends with "62% read". Nothing records a reading
               position, so the line stops at what the shelf actually knows. */}
-          <Text className="mt-1 text-[13.5px] text-muted">
+          <Text className="font-serif mt-1 text-[13.5px] text-muted">
             {[folder?.book?.authors?.join(", "), wordCount === 1 ? "1 word" : `${wordCount} words`]
               .filter(Boolean)
               .join(" · ")}
@@ -118,7 +118,7 @@ export default function FolderScreen() {
 
       {words.error ? (
         <View className="mt-5">
-          <Text className="mb-3 text-[13px] text-danger">{words.error.message}</Text>
+          <Text className="font-serif mb-3 text-[13px] text-danger">{words.error.message}</Text>
           <Pressable
             onPress={() => words.refetch()}
             className="min-h-[40px] items-center justify-center rounded-card border border-surface-strong"
@@ -132,7 +132,7 @@ export default function FolderScreen() {
         <View className="items-center py-12">
           <Ionicons name="bookmark-outline" size={28} color={mutedColor} />
           <Text className="mt-3 font-serif-semibold text-[16px] text-foreground">No words yet</Text>
-          <Text className="mt-1 text-center text-[13px] text-muted">
+          <Text className="font-serif mt-1 text-center text-[13px] text-muted">
             Log the first word you looked up while reading this.
           </Text>
           <Link href={{ pathname: "/add-word", params: { folderId: id } }} asChild>
@@ -171,20 +171,20 @@ export default function FolderScreen() {
                       word and its state the way a table of contents does. */}
                   <View className="mb-1 flex-1 border-b border-dotted border-surface-strong" />
                   <Text
-                    className={`text-[11px] uppercase tracking-[0.6px] ${MASTERY_CLASS[mastery]}`}
+                    className={`font-serif text-[11px] uppercase tracking-[0.6px] ${MASTERY_CLASS[mastery]}`}
                   >
                     {mastery}
                   </Text>
                 </View>
 
                 {definition ? (
-                  <Text className="mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
+                  <Text className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
                     {definition}
                   </Text>
                 ) : (
                   // Not an error: word.create leaves dictionaryEntryId null
                   // when no definition was known at capture time.
-                  <Text className="mt-1 text-[12px] text-muted">Waiting on a definition.</Text>
+                  <Text className="font-serif mt-1 text-[12px] text-muted">Waiting on a definition.</Text>
                 )}
               </Pressable>
             </Link>
@@ -193,7 +193,7 @@ export default function FolderScreen() {
       </View>
 
       {words.data?.length ? (
-        <Text className="mt-3 text-center text-[11px] text-muted">
+        <Text className="font-serif mt-3 text-center text-[11px] text-muted">
           Long-press a word to delete it.
         </Text>
       ) : null}

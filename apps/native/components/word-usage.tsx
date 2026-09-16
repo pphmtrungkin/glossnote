@@ -58,7 +58,7 @@ export function WordUsage({
         ) : null}
       </View>
 
-      {usageNote ? <Text className="mt-3 text-[13.5px] leading-[21px] text-muted">{usageNote}</Text> : null}
+      {usageNote ? <Text className="font-serif mt-3 text-[13.5px] leading-[21px] text-muted">{usageNote}</Text> : null}
     </View>
   );
 }

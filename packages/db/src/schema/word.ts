@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { book, folder } from "./book";
@@ -39,6 +39,9 @@ export const word = pgTable(
     // construction and would leak reading context if surfaced.
     personalNote: text("personal_note"),
     captureMethod: captureMethodEnum("capture_method").notNull(),
+    // The page the reader met the word on, when they gave one. Private, like
+    // the note: it never reaches word.suggestions.
+    page: integer("page"),
     // Snapshot of the user's opt-out preference at capture time, so flipping
     // the global toggle later doesn't retroactively change past contributions.
     contributesToAggregate: boolean("contributes_to_aggregate").notNull().default(true),

@@ -43,6 +43,13 @@
       "when": 1789376207772,
       "tag": "0005_add_folder_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789388679728,
+      "tag": "0006_add_reading_progress",
+      "breakpoints": true
     }
   ]
 }

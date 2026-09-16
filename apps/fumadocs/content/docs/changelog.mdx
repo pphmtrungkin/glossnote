@@ -11,6 +11,20 @@ Anything marked **Breaking** changes behaviour that an existing caller depends o
 
 ## Unreleased
 
+### Reading progress, from the page a word was saved on
+
+Add word has a **Page** field beside the word, pre-filled with the shelf's current page. Saving stores it on the word and moves the shelf forward. Today's home card now draws the design's bar and "62% · p.184". The shelf's long-press sheet can set any page, and the word screen ends its line with `p.184`.
+
+| Column | Migration `0006` | Written by |
+| --- | --- | --- |
+| `book.pages` | Hardcover's page count for the picked hit | `folder.create` (via `upsertBook`) |
+| `folder.current_page` | Where the reader is | `captureWord`, forward only; `folder.update`, any page |
+| `word.page` | The page the word was met on | `word.create` / `word.createMany` |
+
+**Why on the word, not only the shelf.** Readers look words up while reading, so the page is already in hand. A separate "update progress" step is one readers forget. **Why forward only.** A word looked up from a flashback page must not pull progress back; the sheet exists for a genuine re-read. **Why no check against `book.pages`.** It is one edition's count, and the reader's edition may be longer. The display caps at 100%.
+
+Offline, the page rides in `pending_sync.page` (device `user_version` 4), so progress catches up when the queue flushes. `db:smoke` checks the mapping, forward-only movement, that a duplicate capture keeps the word's first page, the flush, and owner-only `folder.update`. Importing progress from Hardcover is not built.
+
 ### Four tabs: Today, Library, Practise, You
 
 | Tab | What it holds |

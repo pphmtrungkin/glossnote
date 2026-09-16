@@ -58,7 +58,7 @@ export default function SearchScreen() {
       </View>
 
       {trimmedQuery.length === 0 ? (
-        <Text className="mt-6 text-[13.5px] leading-[21px] text-muted">
+        <Text className="font-serif mt-6 text-[13.5px] leading-[21px] text-muted">
           Search across every shelf you keep.
         </Text>
       ) : null}
@@ -70,11 +70,11 @@ export default function SearchScreen() {
       ) : null}
 
       {results.error ? (
-        <Text className="mt-5 text-[13px] text-danger">{results.error.message}</Text>
+        <Text className="font-serif mt-5 text-[13px] text-danger">{results.error.message}</Text>
       ) : null}
 
       {trimmedQuery.length > 0 && results.data?.length === 0 ? (
-        <Text className="mt-6 text-[13.5px] text-muted">
+        <Text className="font-serif mt-6 text-[13.5px] text-muted">
           No words match &quot;{trimmedQuery}&quot;.
         </Text>
       ) : null}
@@ -109,14 +109,14 @@ export default function SearchScreen() {
                         {word.term}
                       </Text>
                       <Text
-                        className={`text-[11px] uppercase tracking-[0.6px] ${MASTERY_CLASS[mastery]}`}
+                        className={`font-serif text-[11px] uppercase tracking-[0.6px] ${MASTERY_CLASS[mastery]}`}
                       >
                         {mastery}
                       </Text>
                     </View>
-                    <Text className="mt-1 text-[13px] text-muted">{word.folder.title}</Text>
+                    <Text className="font-serif mt-1 text-[13px] text-muted">{word.folder.title}</Text>
                     {definition ? (
-                      <Text className="mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
+                      <Text className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
                         {definition}
                       </Text>
                     ) : null}

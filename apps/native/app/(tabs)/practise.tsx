@@ -50,7 +50,7 @@ export default function PractiseScreen() {
       <Text className="mt-3 font-serif-semibold text-[29px] leading-[33px] tracking-[-0.6px] text-foreground">
         Practise
       </Text>
-      <Text className="mt-1 text-[14px] text-muted">
+      <Text className="font-serif mt-1 text-[14px] text-muted">
         {waiting.isPending
           ? " "
           : cards.length === 0
@@ -72,13 +72,13 @@ export default function PractiseScreen() {
       ) : (
         // A word becomes a card only once its definition has example
         // sentences to blank out — see word.quiz.
-        <Text className="mt-4 text-[13px] leading-[20px] text-muted">
+        <Text className="font-serif mt-4 text-[13px] leading-[20px] text-muted">
           Words become cards once their definition has an example to work from. Save a few more, and check
           back.
         </Text>
       )}
 
-      {waiting.error ? <Text className="mt-4 text-[13px] text-danger">{waiting.error.message}</Text> : null}
+      {waiting.error ? <Text className="font-serif mt-4 text-[13px] text-danger">{waiting.error.message}</Text> : null}
 
       {/* ---- By shelf ------------------------------------------------------ */}
       {shelves.length > 0 ? (
@@ -105,7 +105,7 @@ export default function PractiseScreen() {
                   <Text className="font-serif-semibold text-[16px] leading-[20px] text-foreground" numberOfLines={2}>
                     {shelf.title}
                   </Text>
-                  <Text className="mt-0.5 text-[12px] text-muted">
+                  <Text className="font-serif mt-0.5 text-[12px] text-muted">
                     {count === 1 ? "1 word waiting" : `${count} words waiting`}
                   </Text>
                 </View>
@@ -131,12 +131,12 @@ export default function PractiseScreen() {
                 <Pressable className="border-b border-surface-strong py-3">
                   <View className="flex-row items-baseline gap-2.5">
                     <Text className="font-serif-semibold text-[17px] leading-[20px] text-foreground">{word.term}</Text>
-                    <Text className="flex-1 text-right text-[11.5px] text-muted" numberOfLines={1}>
+                    <Text className="font-serif flex-1 text-right text-[11.5px] text-muted" numberOfLines={1}>
                       {word.folder.title}
                     </Text>
                   </View>
                   {definition ? (
-                    <Text className="mt-1 text-[13px] leading-[19px] text-muted" numberOfLines={1}>
+                    <Text className="font-serif mt-1 text-[13px] leading-[19px] text-muted" numberOfLines={1}>
                       {definition}
                     </Text>
                   ) : null}
@@ -145,7 +145,7 @@ export default function PractiseScreen() {
             );
           })
         ) : (
-          <Text className="mt-3 text-[13px] leading-[20px] text-muted">
+          <Text className="font-serif mt-3 text-[13px] leading-[20px] text-muted">
             Mark a word mastered on its page and it leaves practice. It will be listed here.
           </Text>
         )}

@@ -46,7 +46,7 @@ db.run(`
     rank INTEGER NOT NULL DEFAULT 0
   );
   CREATE UNIQUE INDEX dictionary_term_source_rank_uidx ON dictionary (term, source, rank);
-  PRAGMA user_version = 3;
+  PRAGMA user_version = 4;
 `);
 
 const insert = db.prepare(

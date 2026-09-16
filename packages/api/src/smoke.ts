@@ -219,6 +219,7 @@ const mapped = mapSearchResults({
         // Hardcover's real order: a French edition first, English ones after.
         isbns: ["2221127513", "9782221127513", "0441294677", "9780441294671"],
         release_year: 1965,
+        pages: 412,
         users_count: 41231,
       },
     },
@@ -235,7 +236,9 @@ assert.deepEqual(mapped[0], {
   coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
   description: null,
   releaseYear: 1965,
+  pages: 412,
 });
+assert.equal(mapped[1].pages, null, "a hit with no page count maps to null");
 assert.equal(mapped[1].coverImageUrl, null, "a hit with no isbns maps to a null cover, not a crash");
 assert.equal(mapped[1].externalId, "1913699", "numeric and string ids both normalize to string");
 assert.equal(mapped[2].coverImageUrl, null, "an empty isbn list is a coverless book, not a broken payload");
@@ -303,6 +306,7 @@ const hit = {
   title: "Dune",
   authors: ["Frank Herbert"],
   coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
+  pages: 412,
 };
 const linked = await api.folder.create({ title: hit.title, status: "reading", book: hit });
 assert.ok(linked.bookId, "folder.create upserts the picked book and links it");
@@ -310,6 +314,7 @@ const linkedRow = (await api.folder.list()).find((f) => f.id === linked.id)!;
 assert.equal(linkedRow.book!.provider, "hardcover");
 assert.equal(linkedRow.book!.externalId, "32897");
 assert.deepEqual(linkedRow.book!.authors, ["Frank Herbert"]);
+assert.equal(linkedRow.book!.pages, 412, "the picked hit's page count is stored for the progress bar");
 ok("folder.create upserts a Hardcover book and joins it back on list");
 
 await rejectsWith(
@@ -690,6 +695,32 @@ const rejectedBatch = await caller("someone_else").word.createMany({
 });
 assert.equal(rejectedBatch[0]!.status, "dropped", "another user's folder is never writable through the batch");
 ok("createMany scopes folder ownership to the caller");
+
+// ---- reading progress ----------------------------------------------------
+// A capture's page moves its shelf forward and never back; the shelf sheet's
+// folder.update may set any page. free2 starts with no page at all.
+const progressOf = async (id: string) => (await api.folder.list()).find((row) => row.id === id)!.currentPage;
+assert.equal(await progressOf(free2.id), null, "a shelf starts with no reading position");
+const paged = await api.word.create({ folderId: free2.id, term: "palimpsest", captureMethod: "manual", page: 50 });
+assert.equal(paged.page, 50, "the word keeps its page");
+assert.equal(await progressOf(free2.id), 50, "and the shelf moves to it");
+await api.word.create({ folderId: free2.id, term: "analepsis", captureMethod: "manual", page: 20 });
+assert.equal(await progressOf(free2.id), 50, "a flashback page never pulls progress back");
+const repaged = await api.word.create({ folderId: free2.id, term: "palimpsest", captureMethod: "manual", page: 70 });
+assert.equal(repaged.page, 50, "a duplicate capture keeps the word's first page");
+assert.equal(await progressOf(free2.id), 70, "but the reader still moved on");
+await api.word.createMany({
+  captures: [{ localId: "paged", folderId: free2.id, term: "ekphrasis", captureMethod: "manual", page: 80 }],
+});
+assert.equal(await progressOf(free2.id), 80, "a flushed capture moves progress too");
+assert.equal((await api.folder.update({ id: free2.id, currentPage: 10 })).currentPage, 10, "the sheet may go backwards");
+assert.equal((await api.folder.update({ id: free2.id, currentPage: null })).currentPage, null, "and clear the page");
+await rejectsWith(
+  () => caller("someone_else").folder.update({ id: free2.id, currentPage: 99 }),
+  /Folder not found/,
+  "another reader can't move this shelf's page",
+);
+ok("a word's page moves its shelf forward; folder.update sets any page");
 
 // ---- the quiz ------------------------------------------------------------
 // Cards are built from the shared, term-keyed contexts, so a quiz costs no AI

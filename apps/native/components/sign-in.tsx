@@ -106,7 +106,7 @@ function SignIn() {
             {isSubmitting ? (
               <Spinner size="sm" color="default" />
             ) : (
-              <Button.Label>Sign in</Button.Label>
+              <Button.Label className="font-serif-medium">Sign in</Button.Label>
             )}
           </Button>
         )}

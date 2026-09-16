@@ -123,7 +123,7 @@ export function SignUp() {
             {isSubmitting ? (
               <Spinner size="sm" color="default" />
             ) : (
-              <Button.Label>Create account</Button.Label>
+              <Button.Label className="font-serif-medium">Create account</Button.Label>
             )}
           </Button>
         )}

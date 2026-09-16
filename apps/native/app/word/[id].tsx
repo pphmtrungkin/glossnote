@@ -73,7 +73,7 @@ export default function WordScreen() {
     return (
       <Container className="items-center justify-center px-8">
         <Stack.Screen options={{ title: "Word" }} />
-        <Text className="text-center text-[14px] text-muted">
+        <Text className="font-serif text-center text-[14px] text-muted">
           That word is no longer on this shelf.
         </Text>
       </Container>
@@ -97,10 +97,10 @@ export default function WordScreen() {
             className="h-[60px] w-[40px]"
           />
         ) : null}
-        <Text className="flex-1 text-[10.5px] uppercase tracking-[1.5px] text-muted">
-          {/* The design ends this line with a page number. Captures don't record
-              one, so the shelf title is where it stops. */}
-          {[state, folder?.title].filter(Boolean).join(" · ")}
+        <Text className="font-serif flex-1 text-[10.5px] uppercase tracking-[1.5px] text-muted">
+          {/* The design ends this line with a page number, when the capture
+              recorded one. */}
+          {[state, folder?.title, word.page ? `p.${word.page}` : null].filter(Boolean).join(" · ")}
         </Text>
       </View>
 
@@ -111,9 +111,9 @@ export default function WordScreen() {
       {/* ---- What it means -------------------------------------------------- */}
       <View className="mt-6 border-t-2 border-foreground pt-4">
         {definition ? (
-          <Text className="text-[17px] leading-[26px] text-foreground">{definition}</Text>
+          <Text className="font-serif text-[17px] leading-[26px] text-foreground">{definition}</Text>
         ) : (
-          <Text className="text-[14px] text-muted">
+          <Text className="font-serif text-[14px] text-muted">
             No definition resolved yet. It fills in the next time this word is looked up online.
           </Text>
         )}
@@ -134,7 +134,7 @@ export default function WordScreen() {
       <View className="mt-7 flex-row gap-4">
         <View className="flex-1">
           <Kicker>Saved</Kicker>
-          <Text className="mt-1.5 text-[15px] text-foreground">
+          <Text className="font-serif mt-1.5 text-[15px] text-foreground">
             {longDate(new Date(word.createdAt))}
           </Text>
         </View>
@@ -143,7 +143,7 @@ export default function WordScreen() {
               sorts by least recently reviewed — so this reports the past
               instead of promising a future. */}
           <Kicker>Last practised</Kicker>
-          <Text className="mt-1.5 text-[15px] text-foreground">
+          <Text className="font-serif mt-1.5 text-[15px] text-foreground">
             {word.lastReviewedAt ? longDate(new Date(word.lastReviewedAt)) : "Not yet"}
           </Text>
         </View>

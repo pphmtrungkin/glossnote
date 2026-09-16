@@ -31,7 +31,7 @@ export default function SignInScreen() {
             className="-mr-3"
             onPress={() => router.replace("/sign-up")}
           >
-            <Button.Label className="text-[13px] text-muted">Create account</Button.Label>
+            <Button.Label className="font-serif-medium text-[13px] text-muted">Create account</Button.Label>
           </Button>
         </View>
 
@@ -39,7 +39,7 @@ export default function SignInScreen() {
           <Text className="font-serif-semibold text-[32px] leading-[35px] tracking-[-0.64px] text-foreground">
             Welcome back.
           </Text>
-          <Text className="max-w-[280px] text-[15px] leading-[23px] text-muted">
+          <Text className="font-serif max-w-[280px] text-[15px] leading-[23px] text-muted">
             Your shelves are where you left them.
           </Text>
         </View>

@@ -19,8 +19,8 @@ Treat these tables as a black box. `user.id` is the anchor for every other table
 
 ```ts
 // schema/book.ts (shape)
-book: { id, provider, externalId, title, authors[], coverImageUrl, description }
-folder: { id, userId, bookId?, title, status: "reading" | "finished" | "misc" }
+book: { id, provider, externalId, title, authors[], coverImageUrl, description, pages? }
+folder: { id, userId, bookId?, title, status: "reading" | "finished" | "misc", currentPage? }
 ```
 
 ### `book`
@@ -40,6 +40,8 @@ A `folder` is one shelf for one user. It means "I am tracking this book."
 
 `title` is copied from the book when the folder is created. This is a small duplication, but it lets the home screen list all folders without joining the `book` table every time.
 
+`currentPage` is where this reader is in the book. A saved word with a `page` moves it forward, never back, so a word from a flashback page leaves it alone. `folder.update` can set any page, for a re-read. `book.pages` is Hardcover's count for one edition, so it only scales the progress bar; a page past it is allowed and the bar stops at 100%.
+
 A simple way to picture it: `book` is one shared page per book, like a Wikipedia article. `folder` is one personal notebook, per user, per book.
 
 ## The main table: `word`
@@ -51,6 +53,7 @@ word: {
   term, normalizedTerm,
   dictionaryEntryId?, definitionOverride?, personalNote?,
   captureMethod: "manual" | "voice",
+  page?,
   contributesToAggregate, mastered, masteredAt?, lastReviewedAt?,
 }
 ```

@@ -69,6 +69,7 @@ async function captureWord(args: {
   term: string;
   definition?: string;
   captureMethod: CaptureMethod;
+  page?: number;
   contributesToAggregate: boolean;
 }) {
   const normalizedTerm = normalizeTerm(args.term);
@@ -90,12 +91,23 @@ async function captureWord(args: {
       dictionaryEntryId: resolved?.id ?? null,
       definitionOverride: resolved ? undefined : args.definition,
       captureMethod: args.captureMethod,
+      page: args.page,
       // Snapshot at capture time — flipping the toggle later shouldn't
       // retroactively change past contributions.
       contributesToAggregate: args.contributesToAggregate,
     })
     .onConflictDoNothing({ target: [word.folderId, word.normalizedTerm] })
     .returning();
+
+  // Forward only: a word looked up from a flashback page must not pull the
+  // shelf's progress back. Runs for a duplicate capture too — the reader still
+  // told us where they are, even though the word keeps its first page.
+  if (args.page !== undefined) {
+    await db
+      .update(folder)
+      .set({ currentPage: sql`greatest(coalesce(${folder.currentPage}, 0), ${args.page})` })
+      .where(eq(folder.id, args.folder.id));
+  }
 
   if (created) return created;
 
@@ -151,6 +163,7 @@ const captureSchema = z.object({
   term: z.string().min(1),
   definition: z.string().optional(),
   captureMethod: z.enum(CAPTURE_METHODS),
+  page: z.number().int().min(1).max(100000).optional(),
 });
 
 /** How many queued captures one flush may carry. */
@@ -201,6 +214,7 @@ export const wordRouter = router({
       term: input.term,
       definition: input.definition,
       captureMethod: input.captureMethod,
+      page: input.page,
       contributesToAggregate: await contributionDefault(ctx.session.user.id),
     });
   }),
@@ -261,6 +275,7 @@ export const wordRouter = router({
           term: capture.term,
           definition: capture.definition,
           captureMethod: capture.captureMethod,
+          page: capture.page,
           contributesToAggregate,
         });
         results.push({ localId: capture.localId, status: "saved", wordId: saved.id });

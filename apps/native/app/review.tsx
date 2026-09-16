@@ -102,7 +102,7 @@ export default function ReviewScreen() {
           />
         </View>
 
-        <Text className="text-[11.5px] text-muted">
+        <Text className="font-serif text-[11.5px] text-muted">
           {order.length ? `${Math.min(index + 1, order.length)} / ${order.length}` : "0 / 0"}
         </Text>
       </View>
@@ -125,7 +125,7 @@ export default function ReviewScreen() {
               so `max-w-[28ch]` squeezed this into a column a few letters wide —
               and that column grew tall enough to push the centred block, big
               number first, up under the status bar. */}
-          <Text className="mt-2 max-w-[320px] text-[15px] leading-[24px] text-muted">
+          <Text className="font-serif mt-2 max-w-[320px] text-[15px] leading-[24px] text-muted">
             {cards.length === 0
               ? "Nothing to practise yet. Words become cards once their definition has an example to work from."
               : "That's the set for now. The ones you've just seen go to the back of the queue."}
@@ -141,7 +141,7 @@ export default function ReviewScreen() {
         </View>
       ) : (
         <View className="flex-1">
-          <Text className="mb-4 text-[11px] uppercase tracking-[1.5px] text-muted">
+          <Text className="font-serif mb-4 text-[11px] uppercase tracking-[1.5px] text-muted">
             {folders.data?.find((folder) => folder.id === card.folderId)?.title ?? ""}
           </Text>
 
@@ -158,12 +158,12 @@ export default function ReviewScreen() {
                 {card.answer}
               </Text>
               {card.definition ? (
-                <Text className="mt-3 text-[17px] leading-[26px] text-foreground">
+                <Text className="font-serif mt-3 text-[17px] leading-[26px] text-foreground">
                   {card.definition}
                 </Text>
               ) : null}
               {card.usageNote ? (
-                <Text className="mt-2.5 text-[13.5px] leading-[21px] text-muted">
+                <Text className="font-serif mt-2.5 text-[13.5px] leading-[21px] text-muted">
                   {card.usageNote}
                 </Text>
               ) : null}
@@ -212,7 +212,7 @@ export default function ReviewScreen() {
       )}
 
       {quiz.error ? (
-        <Text className="mt-4 text-[13px] text-danger">{quiz.error.message}</Text>
+        <Text className="font-serif mt-4 text-[13px] text-danger">{quiz.error.message}</Text>
       ) : null}
     </Container>
   );

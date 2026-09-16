@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { folderStatusEnum, folderVisibilityEnum } from "./enums";
@@ -21,6 +21,9 @@ export const book = pgTable(
     authors: text("authors").array().notNull().default([]),
     coverImageUrl: text("cover_image_url"),
     description: text("description"),
+    // Hardcover's page count for the book's default edition. Editions differ,
+    // so it only scales the progress bar and never validates a page.
+    pages: integer("pages"),
     // The add-word form's AI-picked words for this book: Datamuse-checked
     // dictionary words, grouped by subject. Keyed by book and shared by every
     // reader of it, so a book costs one AI call however many readers add words
@@ -56,6 +59,9 @@ export const folder = pgTable(
     // only as counts, never definitions, notes or the shelf itself. Read live
     // by word.suggestions, so switching back to private hides earlier words too.
     visibility: folderVisibilityEnum("visibility").notNull().default("private"),
+    // Where the reader is. A capture with a page moves it forward only; the
+    // shelf sheet (folder.update) may set any page, backwards included.
+    currentPage: integer("current_page"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
