@@ -28,11 +28,13 @@ const SEARCH_QUERY = `
 // fields but not the JSON shape, and the index gains fields over time — an
 // exact schema would break on their deploys, not ours.
 //
-// Hardcover's own `image` is deliberately not read. Its covers are uploaded by
-// Hardcover users, and Hardcover warns that serving them publicly invites
-// copyright claims, so covers come from Open Library by ISBN instead — see
-// openLibraryCoverUrl. Open Library's covers are user-uploaded too, so that
-// swap is not a licence: the takedown-policy advice in docs/book-search holds.
+// Hardcover's own `image` is the cover, with openLibraryCoverUrl as the
+// fallback for a hit that has none: on 27 measured results Hardcover covered 19
+// where Open Library's ISBN links covered 7, and a shelf of blank tiles is the
+// thing readers notice first. Hardcover's images are uploaded by its users and
+// Hardcover warns that serving them publicly invites copyright claims — Open
+// Library is a wiki whose covers are user uploads too, so either way the app
+// needs the DMCA takedown policy docs/book-search asks for before it is public.
 const hitSchema = z.object({
   document: z.looseObject({
     id: z.union([z.string(), z.number()]),
@@ -43,6 +45,9 @@ const hitSchema = z.object({
     description: z.string().nullish(),
     release_year: z.number().nullish(),
     pages: z.number().nullish(),
+    // Hardcover's own cover. Loose: the object also carries colour and size
+    // fields this doesn't read, and a hit may have no image at all.
+    image: z.looseObject({ url: z.string().nullish() }).nullish(),
   }),
 });
 
@@ -51,8 +56,14 @@ const hitSchema = z.object({
 // missing would turn "Hardcover changed their API" into a silent "no matches".
 const resultsSchema = z.looseObject({ hits: z.array(hitSchema) });
 
-/** The only cover link a book row may hold: one openLibraryCoverUrl built. */
+/**
+ * The cover links a book row may hold: Hardcover's own asset host, or one
+ * openLibraryCoverUrl built. The row is shared by every reader of the book, so
+ * an arbitrary URL from one client would be an image shown to all of them.
+ */
 const OPEN_LIBRARY_COVER = /^https:\/\/covers\.openlibrary\.org\/b\/isbn\/[0-9X]{10,13}-M\.jpg\?default=false$/;
+const HARDCOVER_COVER = /^https:\/\/assets\.hardcover\.app\/[^\s"'<>]+$/;
+const isSharableCover = (url: string) => HARDCOVER_COVER.test(url) || OPEN_LIBRARY_COVER.test(url);
 
 /** English-language registration groups: 978-0, 978-1 and 979-8, or 0 and 1 for an ISBN-10. */
 function isEnglishIsbn(isbn: string) {
@@ -60,13 +71,14 @@ function isEnglishIsbn(isbn: string) {
 }
 
 /**
- * An Open Library cover link for a Hardcover hit, or null.
+ * An Open Library cover link for a Hardcover hit, or null — the fallback for
+ * a hit Hardcover has no image of its own for.
  *
  * Hardcover lists every edition's ISBN, so the pick matters: an English
  * edition first (Open Library's covers are mostly English editions), ISBN-13
  * before ISBN-10. Measured on 27 real results on 2026-09-13, this found 7
- * covers where Hardcover's own images had 19 — the price of not serving
- * Hardcover's user-uploaded images.
+ * covers where Hardcover's own images had 19, which is why Hardcover's image
+ * comes first and this is the fallback.
  *
  * No request is made here. The phone loads the image, so Open Library's ISBN
  * rate limit (100 per 5 minutes per IP) is spent per device, not by the server,
@@ -112,7 +124,7 @@ export function mapSearchResults(results: unknown) {
     externalId: String(document.id),
     title: document.title,
     authors: document.author_names ?? [],
-    coverImageUrl: openLibraryCoverUrl(document.isbns),
+    coverImageUrl: document.image?.url ?? openLibraryCoverUrl(document.isbns),
     description: document.description ?? null,
     releaseYear: document.release_year ?? null,
     pages: document.pages ?? null,
@@ -126,14 +138,13 @@ export const bookInputSchema = z.object({
   externalId: z.string().min(1),
   title: z.string().min(1),
   authors: z.array(z.string()).default([]),
-  // Only a link openLibraryCoverUrl built is kept. The book row is shared by
-  // every reader of the book, so an arbitrary URL from one client would be an
-  // image shown to all of them. Anything else — including an older client's
-  // Hardcover link — is stored as no cover rather than failing the folder.
+  // Only Hardcover's own asset host or an Open Library link the server would
+  // build is kept; anything else is stored as no cover rather than failing the
+  // folder. See isSharableCover for why the row can't take an arbitrary URL.
   coverImageUrl: z
     .string()
     .nullish()
-    .transform((url) => (url && OPEN_LIBRARY_COVER.test(url) ? url : null)),
+    .transform((url) => (url && isSharableCover(url) ? url : null)),
   description: z.string().nullish(),
   pages: z.number().int().positive().nullish(),
 });

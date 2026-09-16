@@ -2,11 +2,12 @@ import { type ReactNode, useState } from "react";
 import { Image, Text, View } from "react-native";
 
 /**
- * A book's cover from Open Library, or `fallback` when there isn't one.
+ * A book's cover — Hardcover's own image, or an Open Library link for a book
+ * Hardcover has no image for — or `fallback` when there is neither.
  *
- * Cover links carry `?default=false` (see openLibraryCoverUrl in the book
- * router), so a book Open Library has no cover for is a 404 instead of a blank
- * white image. A 404 is only discovered by trying to load it, which is why this
+ * Open Library links carry `?default=false` (see openLibraryCoverUrl in the
+ * book router), so a book it has no cover for is a 404 instead of a blank white
+ * image. A 404 is only discovered by trying to load it, which is why this
  * tracks a failed load and not just a null link. The failure is remembered per
  * URL, so a reused row showing a different book tries again.
  */
@@ -22,11 +23,12 @@ export function BookCover({
   const [failedUri, setFailedUri] = useState<string | null>(null);
   if (!uri || failedUri === uri) return <>{fallback}</>;
 
-  // Stored links ask for Open Library's medium size (180×288 px), which blurs
-  // on a 3× screen once a cover is wider than ~60pt. Large is 311×500 px and
-  // ~38 KB — enough for the 100pt book-page cover — so every tile asks for it.
-  // Swapped here rather than in the stored link, so rows already saved get it.
-  const source = uri.replace(/-M\.jpg/, "-L.jpg");
+  // Open Library links ask for its medium size (180×288 px), which blurs on a
+  // 3× screen once a cover is wider than ~60pt. Large is 311×500 px and ~38 KB
+  // — enough for the 100pt book-page cover — so every tile asks for it. Swapped
+  // here rather than in the stored link, so rows already saved get it.
+  // Hardcover serves one size per image and has no such suffix to swap.
+  const source = uri.includes("covers.openlibrary.org") ? uri.replace(/-M\.jpg/, "-L.jpg") : uri;
 
   return (
     <Image source={{ uri: source }} className={className} resizeMode="cover" onError={() => setFailedUri(uri)} />
@@ -34,9 +36,9 @@ export function BookCover({
 }
 
 /**
- * A cover-shaped tile: the book's cover when Open Library has one, and the
- * title set in type when it doesn't. With Open Library's coverage that is most
- * books, so the fallback is part of the design rather than an empty box.
+ * A cover-shaped tile: the book's cover when there is one, and the title set in
+ * type when there isn't. Plenty of books still have none, so the fallback is
+ * part of the design rather than an empty box.
  *
  * Size it with `className`. `compact` is for tiles too small for legible type,
  * which show the title's first letter instead. `accent` gives the tile the

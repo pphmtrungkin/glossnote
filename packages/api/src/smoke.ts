@@ -201,10 +201,10 @@ assert.equal(
 ok("definitions stay on the user's own row; the shared cache is server-only");
 
 // ---- Hardcover search mapping -------------------------------------------
-// A trimmed real Typesense payload. Covers come from Open Library, built from
-// the hit's `isbns`, never from Hardcover's user-uploaded `image` — which is
-// still in the payload and must be ignored. `isbns` is absent from the second
-// hit and empty on the third, and both must map to no cover without a crash.
+// A trimmed real Typesense payload. The cover is Hardcover's own `image`, with
+// an Open Library link built from the hit's `isbns` as the fallback. The second
+// hit has neither, and the third has an empty image and an empty isbn list —
+// both must map to no cover without a crash.
 const mapped = mapSearchResults({
   found: 4,
   hits: [
@@ -213,9 +213,7 @@ const mapped = mapSearchResults({
         id: 32897,
         title: "Dune",
         author_names: ["Frank Herbert"],
-        // Hardcover's own image is present and must be ignored: its covers are
-        // user uploads, and the app takes Open Library's instead.
-        image: { url: "https://assets.hardcover.app/dune.jpg", color: "orange" },
+        image: { url: "https://assets.hardcover.app/books/312460/dune.jpg", color: "orange" },
         // Hardcover's real order: a French edition first, English ones after.
         isbns: ["2221127513", "9782221127513", "0441294677", "9780441294671"],
         release_year: 1965,
@@ -233,19 +231,19 @@ assert.deepEqual(mapped[0], {
   externalId: "32897",
   title: "Dune",
   authors: ["Frank Herbert"],
-  coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
+  coverImageUrl: "https://assets.hardcover.app/books/312460/dune.jpg",
   description: null,
   releaseYear: 1965,
   pages: 412,
 });
 assert.equal(mapped[1].pages, null, "a hit with no page count maps to null");
-assert.equal(mapped[1].coverImageUrl, null, "a hit with no isbns maps to a null cover, not a crash");
+assert.equal(mapped[1].coverImageUrl, null, "a hit with no image and no isbns maps to a null cover, not a crash");
 assert.equal(mapped[1].externalId, "1913699", "numeric and string ids both normalize to string");
 assert.equal(mapped[2].coverImageUrl, null, "an empty isbn list is a coverless book, not a broken payload");
 assert.equal(
   mapped[3].coverImageUrl,
   "https://covers.openlibrary.org/b/isbn/9783161484100-M.jpg?default=false",
-  "hyphens are stripped, and a non-English ISBN-13 is still better than no cover",
+  "a hit with no image of its own falls back to an Open Library link",
 );
 assert.equal(
   openLibraryCoverUrl(["9791092429213", "9798749854572"]),
@@ -254,7 +252,7 @@ assert.equal(
 );
 assert.deepEqual(mapSearchResults({ found: 0, hits: [] }), [], "no matches is an empty list");
 assert.throws(() => mapSearchResults({ unexpected: true }), /Unexpected search response/);
-ok("search results map from Typesense hits, with Open Library covers picked by English ISBN");
+ok("search results map from Typesense hits, with Hardcover covers and Open Library as the fallback");
 
 // ---- the proxy request budget --------------------------------------------
 // book.search and dictionary.lookup spend an external quota — Hardcover caps
@@ -305,7 +303,7 @@ const hit = {
   externalId: "32897",
   title: "Dune",
   authors: ["Frank Herbert"],
-  coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false",
+  coverImageUrl: "https://assets.hardcover.app/books/312460/dune.jpg",
   pages: 412,
 };
 const linked = await api.folder.create({ title: hit.title, status: "reading", book: hit });
@@ -338,28 +336,29 @@ const relinked = await api.folder.create({
   book: {
     ...hit,
     title: "Dune (Deluxe Edition)",
-    coverImageUrl: "https://covers.openlibrary.org/b/isbn/9780593099322-M.jpg?default=false",
+    coverImageUrl: "https://assets.hardcover.app/books/312460/dune-refreshed.jpg",
   },
 });
 assert.equal(relinked.bookId, linked.bookId, "unique(provider, external_id) keeps one row per Hardcover book");
 const refreshed = (await db.select().from(book).where(eq(book.id, relinked.bookId!)))[0];
 assert.equal(refreshed.title, "Dune (Deluxe Edition)", "upsert refreshes metadata rather than DO NOTHING");
-assert.equal(refreshed.coverImageUrl, "https://covers.openlibrary.org/b/isbn/9780593099322-M.jpg?default=false");
+assert.equal(refreshed.coverImageUrl, "https://assets.hardcover.app/books/312460/dune-refreshed.jpg");
 await api.folder.delete({ id: relinked.id });
 ok("re-picking a book reuses one row and refreshes its metadata");
 
 // The book row is shared by every reader of that book, so a client's cover link
-// is kept only when it is an Open Library cover the server would build. Any
-// other URL would be one reader's image shown to all of them.
+// is kept only when it is Hardcover's own asset host or an Open Library cover
+// the server would build. Any other URL would be one reader's image shown to
+// all of them — an ad, or something worse.
 const foreignCover = await api.folder.create({
   title: "Dune",
-  book: { ...hit, coverImageUrl: "https://assets.hardcover.app/dune.jpg" },
+  book: { ...hit, coverImageUrl: "https://example.invalid/whatever.jpg" },
 });
 const foreignRow = (await db.select().from(book).where(eq(book.id, foreignCover.bookId!)))[0];
-assert.equal(foreignRow.coverImageUrl, null, "a cover link that is not Open Library's is stored as no cover");
+assert.equal(foreignRow.coverImageUrl, null, "a cover link from neither allowed host is stored as no cover");
 await api.folder.delete({ id: foreignCover.id });
 await db.delete(book).where(eq(book.id, relinked.bookId!));
-ok("folder.create only stores Open Library cover links on the shared book row");
+ok("folder.create only stores cover links from the two allowed hosts on the shared book row");
 
 // ---- Datamuse definition parsing ----------------------------------------
 // Real payloads, captured from api.datamuse.com.

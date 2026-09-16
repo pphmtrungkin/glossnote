@@ -11,6 +11,14 @@ Anything marked **Breaking** changes behaviour that an existing caller depends o
 
 ## Unreleased
 
+### Covers come from Hardcover again, with Open Library as the fallback
+
+`mapSearchResults` reads Hardcover's own `image.url` first and falls back to `openLibraryCoverUrl`. On 27 measured results Hardcover covered 19 where Open Library covered 7, and a shelf of blank tiles is what readers notice first.
+
+The shared `book` row still refuses an arbitrary cover URL: `bookInputSchema` now accepts `https://assets.hardcover.app/...` **or** an Open Library link of the shape the server builds, and stores anything else as null. One reader must not be able to put an arbitrary image on a row every reader of that book sees.
+
+**Still outstanding:** Hardcover's covers are uploaded by its users, and Hardcover asks that apps serving them publish a DMCA takedown policy. Open Library is a wiki whose covers are user uploads too, so this was owed either way — see [Book search](/docs/book-search).
+
 ### Reading progress, from the page a word was saved on
 
 Add word has a **Page** field beside the word, pre-filled with the shelf's current page. Saving stores it on the word and moves the shelf forward. Today's home card now draws the design's bar and "62% · p.184". The shelf's long-press sheet can set any page, and the word screen ends its line with `p.184`.

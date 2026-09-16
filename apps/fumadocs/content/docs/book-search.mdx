@@ -67,12 +67,13 @@ Why? If we accepted a missing `hits` as "no results", then "Hardcover changed th
 | `externalId` | `document.id` | Converted to a string; the API returns either |
 | `title` | `document.title` | |
 | `authors` | `document.author_names` | Defaults to `[]` |
-| `coverImageUrl` | `document.isbns` | An Open Library cover link, or `null` — see below |
+| `coverImageUrl` | `document.image.url`, else `document.isbns` | Hardcover's own cover, falling back to an Open Library link — see below |
 | `description` | `document.description` | |
+| `pages` | `document.pages` | One edition's page count. It scales the reading-progress bar and validates nothing |
 
-## Covers come from Open Library, not Hardcover
+## Covers come from Hardcover, with Open Library as the fallback
 
-Hardcover's own `image` field is **not** used. Its covers are uploaded by Hardcover users, and Hardcover warns that serving them publicly invites copyright claims. `openLibraryCoverUrl` builds an [Open Library Covers API](https://openlibrary.org/dev/docs/api/covers) link from the hit's ISBNs instead:
+`mapSearchResults` reads Hardcover's own `image.url`. When a hit has none, `openLibraryCoverUrl` builds an [Open Library Covers API](https://openlibrary.org/dev/docs/api/covers) link from its ISBNs instead:
 
 ```
 https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false
@@ -80,13 +81,13 @@ https://covers.openlibrary.org/b/isbn/9780441294671-M.jpg?default=false
 
 Hardcover lists every edition's ISBN, in every language, in no useful order. So the link uses an English-edition ISBN (978-0, 978-1 or 979-8) where there is one, and ISBN-13 before ISBN-10.
 
-- **Fewer books have a cover.** On 27 real search results, 7 got an Open Library cover, where Hardcover's own images covered 19. The [changelog](/docs/changelog) records the other approaches that were measured, and why they lost.
+- **Why Hardcover first.** On 27 real search results, Hardcover's own images covered 19, where Open Library's ISBN links covered 7. A shelf of blank tiles is the first thing a reader notices. The [changelog](/docs/changelog) records the other approaches that were measured.
 - **The server makes no request.** The phone loads the image, so Open Library's ISBN limit (100 requests per 5 minutes per IP) is spent per device.
-- **A missing cover is a 404, not a blank image,** because of `?default=false`. `components/book-cover.tsx` shows the book icon when the load fails.
-- **Only this kind of link is stored.** `folder.create` stores any other `coverImageUrl` as `null`, because the `book` row is shared by every reader of that book. `db:smoke` checks it.
+- **A missing Open Library cover is a 404, not a blank image,** because of `?default=false`. `components/book-cover.tsx` shows the title set in type when a load fails.
+- **Only two hosts are stored.** `folder.create` keeps a `coverImageUrl` from `assets.hardcover.app` or an Open Library link of the shape above, and stores anything else as `null` — the `book` row is shared by every reader of that book, so one reader must not be able to put an arbitrary image on it. `db:smoke` checks it.
 
 <Callout type="warn">
-Open Library is a wiki, and its covers are uploaded by its users too. Publish a DMCA takedown policy before the app is public, whichever source the covers come from.
+Hardcover's covers are uploaded by its users, and Hardcover asks that apps serving them publish a DMCA takedown policy. Open Library is a wiki whose covers are user uploads too. Publish one before the app is public, whichever source the covers come from.
 </Callout>
 
 ## Why `provider` and `externalId` are plain text
