@@ -90,6 +90,32 @@ Hardcover lists every edition's ISBN, in every language, in no useful order. So 
 Hardcover's covers are uploaded by its users, and Hardcover asks that apps serving them publish a DMCA takedown policy. Open Library is a wiki whose covers are user uploads too. Publish one before the app is public, whichever source the covers come from. The draft and the checklist are on [DMCA takedown policy](/docs/dmca) — which records that it is **not published yet**.
 </Callout>
 
+## Scanning a barcode: ISBNs go through `editions`, never `search`
+
+`book.byIsbn` resolves a scanned EAN-13. It does **not** reuse `book.search`, and that is not a style choice:
+
+```
+search(query: "9780441294671")  →  God Emperor of Dune
+```
+
+That book's own `isbns` do not contain the number asked for. Typesense matches fuzzily, exactly like Datamuse's `sp` in [AI enrichment](/docs/ai-enrichment) — so a scan routed through `search` files the wrong edition, confidently. The `editions` query matches exactly instead:
+
+```graphql
+editions(where: { _or: [{ isbn_13: { _eq: $isbn } }, { isbn_10: { _eq: $isbn } }] }, limit: 1) {
+  pages
+  book { id title description release_year pages image { url } contributions { author { name } } }
+}
+```
+
+One request, both ISBN lengths, and everything a `book` row needs nested under it.
+
+- **`externalId` is the book's id, not the edition's.** A scanned copy and a searched one must upsert to one row on `(provider, external_id)`, or readers of the same book split across two rows and take the crowdsourced aggregate with them.
+- **The edition's `pages` wins** over the book's. The scan is for the copy in the reader's hands, and that number scales the reading-progress bar.
+- **A non-ISBN never becomes a request.** `normalizeIsbn` strips to digits and a trailing `X` and requires length 10 or 13, so a cereal-box UPC costs nothing from the shared token.
+- **No match returns `null`,** not an error: "Hardcover doesn't have this edition" is a state the scanner screen renders, with a way into typing the title.
+
+`db:smoke` asserts the mapping and the normaliser against fixtures, with no token and no network call.
+
 ## Why `provider` and `externalId` are plain text
 
 This is the schema choice that lets us change providers without a migration.

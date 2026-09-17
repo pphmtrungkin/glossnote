@@ -30,7 +30,7 @@ import { book } from "@better-vocab/db/schema/book";
 import { env } from "@better-vocab/env/server";
 import { defineTerm, unwrapWrappedObject } from "./enrich";
 import { resetRateLimits } from "./rate-limit";
-import { mapSearchResults, openLibraryCoverUrl } from "./routers/book";
+import { mapEdition, mapSearchResults, normalizeIsbn, openLibraryCoverUrl } from "./routers/book";
 import { pickDefinition } from "./routers/dictionary";
 import { appRouter } from "./routers/index";
 import { db } from "@better-vocab/db";
@@ -253,6 +253,47 @@ assert.equal(
 assert.deepEqual(mapSearchResults({ found: 0, hits: [] }), [], "no matches is an empty list");
 assert.throws(() => mapSearchResults({ unexpected: true }), /Unexpected search response/);
 ok("search results map from Typesense hits, with Hardcover covers and Open Library as the fallback");
+
+// ---- ISBN lookup mapping -------------------------------------------------
+// A trimmed real `editions` payload. A scanned barcode resolves through
+// `editions`, not `search`: Typesense matches fuzzily and hands back a book
+// whose isbns don't include the number asked for.
+const scanned = mapEdition({
+  editions: [
+    {
+      pages: 423,
+      isbn_13: "9780441294671",
+      book: {
+        id: 427363,
+        title: "God Emperor of Dune",
+        description: "Millennia have passed on Arrakis.",
+        release_year: 1981,
+        pages: 436,
+        image: { url: "https://assets.hardcover.app/external_data/30542666/b90d2d32.jpeg" },
+        contributions: [{ author: { name: "Frank Herbert" } }],
+      },
+    },
+  ],
+})!;
+assert.equal(scanned.externalId, "427363", "the BOOK's id keys the row, never the edition's");
+assert.equal(scanned.pages, 423, "the scanned edition's page count wins over the book's");
+assert.deepEqual(scanned.authors, ["Frank Herbert"], "authors come from contributions");
+assert.equal(scanned.coverImageUrl, "https://assets.hardcover.app/external_data/30542666/b90d2d32.jpeg");
+assert.equal(scanned.releaseYear, 1981);
+
+const sparse = mapEdition({
+  editions: [{ pages: null, book: { id: "9", title: "Untitled", contributions: [], image: null } }],
+})!;
+assert.equal(sparse.coverImageUrl, null, "an edition with no image is a coverless book, not a crash");
+assert.deepEqual(sparse.authors, [], "no contributions is an empty author list");
+assert.equal(sparse.pages, null, "no page count anywhere stays null rather than guessing");
+assert.equal(mapEdition({ editions: [] }), null, "no match is null — a state the scanner renders");
+assert.throws(() => mapEdition({ unexpected: true }), /Unexpected ISBN response/);
+
+assert.equal(normalizeIsbn("978-0-441-29467-1"), "9780441294671", "hyphens are stripped");
+assert.equal(normalizeIsbn("043942089x"), "043942089X", "an ISBN-10 check digit may be X");
+assert.equal(normalizeIsbn("12345"), null, "a barcode that is not an ISBN never becomes a request");
+ok("a scanned ISBN maps to the shape a search hit has, and junk never leaves the server");
 
 // ---- the proxy request budget --------------------------------------------
 // book.search and dictionary.lookup spend an external quota — Hardcover caps

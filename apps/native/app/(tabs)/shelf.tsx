@@ -22,6 +22,7 @@ import z from "zod";
 
 import { BookCover, CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
+import { IsbnScanner } from "@/components/isbn-scanner";
 import { TextField } from "@/components/text-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFolders } from "@/hooks/use-folders";
@@ -70,7 +71,7 @@ const BOOK_PAGE_SIZE = 5;
 const ADD_MODES = [
   { id: "search", label: "Search", isDisabled: false },
   { id: "manual", label: "Enter by hand", isDisabled: false },
-  { id: "scan", label: "Scan", isDisabled: true },
+  { id: "scan", label: "Scan", isDisabled: false },
 ] as const;
 
 type AddMode = (typeof ADD_MODES)[number]["id"];
@@ -113,6 +114,8 @@ export default function ShelfScreen() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>("search");
   const [bookPage, setBookPage] = useState(1);
+  // The barcode just read, or null while the camera is still hunting.
+  const [scannedIsbn, setScannedIsbn] = useState<string | null>(null);
 
   // The Hardcover hit the user picked, held until submit. Null means a
   // freeform folder — either they skipped search, or they're offline and typed
@@ -155,6 +158,14 @@ export default function ShelfScreen() {
   // phrase live for a moment after the field is cleared, which does the same.
   const bookHits = isSearchingBooks ? (bookResults.data ?? []) : [];
 
+  // The scanned ISBN, resolved to a book. `null` data is a real answer — that
+  // barcode is not in Hardcover — so the panel below renders it as a state.
+  const scanLookup = useQuery({
+    ...trpc.book.byIsbn.queryOptions({ isbn: scannedIsbn ?? "" }),
+    enabled: scannedIsbn !== null,
+    retry: false,
+  });
+
   function invalidateFolders() {
     return queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() });
   }
@@ -193,6 +204,7 @@ export default function ShelfScreen() {
     setPickedBook(null);
     setBookQuery("");
     setBookPage(1);
+    setScannedIsbn(null);
   }
 
   function pickBook(hit: BookHit) {
@@ -467,6 +479,103 @@ export default function ShelfScreen() {
                     </Pressable>
                   </View>
                 ) : null}
+              </View>
+            ) : addMode === "scan" ? (
+              <View className="mb-3">
+                {scannedIsbn === null ? (
+                  <IsbnScanner
+                    // Armed only while nothing is scanned: the callback fires
+                    // several times a second, and the state change takes a
+                    // render to unmount the camera.
+                    isArmed
+                    onScanned={setScannedIsbn}
+                    onEnterByHand={() => setAddMode("manual")}
+                  />
+                ) : scanLookup.isPending ? (
+                  <View className="h-[186px] items-center justify-center">
+                    <Spinner />
+                  </View>
+                ) : scanLookup.data ? (
+                  <View className="mb-1">
+                    <View className="mb-3.5 flex-row items-center gap-2">
+                      <Ionicons name="checkmark" size={15} color={accentColor} />
+                      <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.6px] text-primary">
+                        ISBN {scannedIsbn}
+                      </Text>
+                    </View>
+
+                    <View className="mb-2 flex-row items-start gap-4">
+                      <BookCover
+                        uri={scanLookup.data.coverImageUrl}
+                        className="w-14 h-[84px] rounded"
+                        fallback={
+                          <View className="w-14 h-[84px] rounded items-center justify-center bg-surface-2">
+                            <Ionicons name="book-outline" size={18} color={mutedColor} />
+                          </View>
+                        }
+                      />
+                      <View className="min-w-0 flex-1">
+                        <Text className="font-serif-semibold text-[20px] leading-[23px] tracking-[-0.3px] text-foreground">
+                          {scanLookup.data.title}
+                        </Text>
+                        <Text className="font-serif mt-0.5 text-[13px] text-muted">
+                          {scanLookup.data.authors.join(", ") || "Unknown author"}
+                        </Text>
+                        <Text className="font-serif mt-2 text-[12px] leading-[19px] text-muted">
+                          {[
+                            scanLookup.data.releaseYear,
+                            scanLookup.data.pages ? `${scanLookup.data.pages} pages` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text className="font-serif mb-4 mt-2.5 text-[12.5px] leading-[19px] text-muted">
+                      Matched exactly from the ISBN — the edition and page count are the ones in
+                      your hands.
+                    </Text>
+
+                    <Button
+                      onPress={() => {
+                        // The path a tapped search result already takes, so one
+                        // way to create a shelf stays.
+                        pickBook(scanLookup.data!);
+                        setAddMode("search");
+                        setScannedIsbn(null);
+                      }}
+                    >
+                      <Button.Label className="font-serif-medium">Yes, shelve it</Button.Label>
+                    </Button>
+                    <Pressable
+                      onPress={() => setScannedIsbn(null)}
+                      accessibilityRole="button"
+                      className="mt-2 min-h-[44px] items-center justify-center"
+                    >
+                      <Text className="font-serif-semibold text-[13px] text-muted">
+                        Not this one — scan again
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View className="mb-1">
+                    <Text className="font-serif mb-4 text-[14px] leading-[21px] text-muted">
+                      Nothing on that barcode. Hardcover may not have this edition — you can still
+                      put it on the shelf yourself.
+                    </Text>
+                    <Button onPress={() => setAddMode("manual")}>
+                      <Button.Label className="font-serif-medium">Enter it by hand</Button.Label>
+                    </Button>
+                    <Pressable
+                      onPress={() => setScannedIsbn(null)}
+                      accessibilityRole="button"
+                      className="mt-2 min-h-[44px] items-center justify-center"
+                    >
+                      <Text className="font-serif-semibold text-[13px] text-muted">Scan again</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
             ) : null}
 

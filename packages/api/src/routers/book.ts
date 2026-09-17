@@ -23,6 +23,29 @@ const SEARCH_QUERY = `
   }
 `;
 
+// An ISBN is resolved through `editions`, never through `search`. Typesense
+// matches fuzzily: asked for 9780441294671 it returned a book whose own `isbns`
+// do not contain that number (probed 2026-09-16, the same trap as Datamuse's
+// `sp`). A barcode has to name the edition in the reader's hands, or it is
+// worse than typing the title. One `_or` covers both ISBN lengths.
+const ISBN_QUERY = `
+  query BookByIsbn($isbn: String!) {
+    editions(where: { _or: [{ isbn_13: { _eq: $isbn } }, { isbn_10: { _eq: $isbn } }] }, limit: 1) {
+      pages
+      isbn_13
+      book {
+        id
+        title
+        description
+        release_year
+        pages
+        image { url }
+        contributions { author { name } }
+      }
+    }
+  }
+`;
+
 // `results` is the raw Typesense payload, typed as an untyped JSON scalar in
 // Hardcover's schema. Parsed loosely on purpose: their docs list the indexed
 // fields but not the JSON shape, and the index gains fields over time — an
@@ -55,6 +78,26 @@ const hitSchema = z.object({
 // without one means the response is not what we think it is. Accepting it as
 // missing would turn "Hardcover changed their API" into a silent "no matches".
 const resultsSchema = z.looseObject({ hits: z.array(hitSchema) });
+
+const editionsSchema = z.looseObject({
+  editions: z.array(
+    z.looseObject({
+      pages: z.number().nullish(),
+      isbn_13: z.string().nullish(),
+      book: z.looseObject({
+        id: z.union([z.string(), z.number()]),
+        title: z.string(),
+        description: z.string().nullish(),
+        release_year: z.number().nullish(),
+        pages: z.number().nullish(),
+        image: z.looseObject({ url: z.string().nullish() }).nullish(),
+        contributions: z
+          .array(z.looseObject({ author: z.looseObject({ name: z.string().nullish() }).nullish() }))
+          .nullish(),
+      }),
+    }),
+  ),
+});
 
 /**
  * The cover links a book row may hold: Hardcover's own asset host, or one
@@ -131,6 +174,56 @@ export function mapSearchResults(results: unknown) {
   }));
 }
 
+/**
+ * Turns one Hardcover edition into the same shape a search hit has, so a
+ * scanned book travels the folder-creation path a searched one already does.
+ *
+ * `externalId` is the BOOK's id, not the edition's: a scanned copy and a
+ * searched one must upsert to one row on (provider, external_id), or readers of
+ * the same book would be split across two rows and the crowdsourced aggregate
+ * with them.
+ *
+ * Returns null for no match — "that barcode isn't in Hardcover" is a state the
+ * scanner renders, not an error.
+ */
+export function mapEdition(data: unknown) {
+  const parsed = editionsSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new TRPCError({
+      code: "BAD_GATEWAY",
+      message: `Unexpected ISBN response from Hardcover: ${JSON.stringify(data).slice(0, 300)}`,
+    });
+  }
+
+  const edition = parsed.data.editions[0];
+  if (!edition) return null;
+
+  const row = edition.book;
+  return {
+    externalId: String(row.id),
+    title: row.title,
+    authors: (row.contributions ?? [])
+      .map((contribution) => contribution.author?.name)
+      .filter((name): name is string => Boolean(name)),
+    coverImageUrl: row.image?.url ?? null,
+    description: row.description ?? null,
+    releaseYear: row.release_year ?? null,
+    // The edition's own count wins: the scan is for the copy in the reader's
+    // hands, and that is the number reading progress is scaled against.
+    pages: edition.pages ?? row.pages ?? null,
+  };
+}
+
+/**
+ * Digits, and the X an ISBN-10 check digit may be. Anything else never becomes
+ * a request — a barcode that is not an ISBN (a UPC off a cereal box) should
+ * cost nothing from the shared token.
+ */
+export function normalizeIsbn(raw: string): string | null {
+  const clean = raw.replace(/[^0-9X]/gi, "").toUpperCase();
+  return clean.length === 10 || clean.length === 13 ? clean : null;
+}
+
 // Shared by book.search's output and folder.create's input: the client hands
 // back the hit it picked, and the server upserts it. Deliberately not a
 // `bookId` — that would be an unvalidated foreign key straight from a client.
@@ -187,6 +280,46 @@ export async function upsertBook(input: BookInput): Promise<string> {
   return row.id;
 }
 
+/**
+ * One POST to Hardcover, with the four failures both procedures handle
+ * identically: no token, a rate limit, a transport error, and GraphQL's habit
+ * of reporting failure with HTTP 200 and an `errors` array.
+ */
+async function hardcoverRequest<T>(document: string, variables: Record<string, unknown>): Promise<T> {
+  if (!env.HARDCOVER_API_TOKEN) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Book search is unavailable: HARDCOVER_API_TOKEN is not set on the server.",
+    });
+  }
+
+  const response = await fetch(HARDCOVER_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.HARDCOVER_API_TOKEN}`,
+    },
+    body: JSON.stringify({ query: document, variables }),
+  });
+
+  if (response.status === 429) {
+    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Book search is rate limited — try again shortly." });
+  }
+  if (!response.ok) {
+    throw new TRPCError({
+      code: "BAD_GATEWAY",
+      message: `Book search failed (${response.status} ${response.statusText}).`,
+    });
+  }
+
+  const payload = (await response.json()) as { data?: T; errors?: { message: string }[] };
+  if (payload.errors?.length) {
+    throw new TRPCError({ code: "BAD_GATEWAY", message: `Book search failed: ${payload.errors[0]!.message}` });
+  }
+
+  return (payload.data ?? {}) as T;
+}
+
 export const bookRouter = router({
   // Proxied through the server, never called from the app directly: Hardcover
   // requires the token stay out of the client, and SoftwareSpec §8.1 says the
@@ -206,45 +339,27 @@ export const bookRouter = router({
       }),
     )
     .query(async ({ input }) => {
-      if (!env.HARDCOVER_API_TOKEN) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "Book search is unavailable: HARDCOVER_API_TOKEN is not set on the server.",
-        });
-      }
-
-      const response = await fetch(HARDCOVER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${env.HARDCOVER_API_TOKEN}`,
-        },
-        body: JSON.stringify({
-          query: SEARCH_QUERY,
-          variables: { query: input.query, perPage: input.limit, page: input.page },
-        }),
+      const data = await hardcoverRequest<{ search?: { results?: unknown } }>(SEARCH_QUERY, {
+        query: input.query,
+        perPage: input.limit,
+        page: input.page,
       });
 
-      if (response.status === 429) {
-        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Book search is rate limited — try again shortly." });
-      }
-      if (!response.ok) {
-        throw new TRPCError({
-          code: "BAD_GATEWAY",
-          message: `Book search failed (${response.status} ${response.statusText}).`,
-        });
-      }
+      return mapSearchResults(data.search?.results);
+    }),
 
-      const payload = (await response.json()) as {
-        data?: { search?: { results?: unknown } };
-        errors?: { message: string }[];
-      };
-
-      // GraphQL reports failures with HTTP 200 and an `errors` array.
-      if (payload.errors?.length) {
-        throw new TRPCError({ code: "BAD_GATEWAY", message: `Book search failed: ${payload.errors[0].message}` });
+  // A scanned barcode. Same budget as search — it is the same shared token —
+  // and the same one-request-per-call shape.
+  byIsbn: protectedProcedure
+    .use(rateLimit({ name: "book.byIsbn", max: 20, windowSeconds: 60 }))
+    .input(z.object({ isbn: z.string() }))
+    .query(async ({ input }) => {
+      const isbn = normalizeIsbn(input.isbn);
+      if (!isbn) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "That barcode is not an ISBN." });
       }
 
-      return mapSearchResults(payload.data?.search?.results);
+      const data = await hardcoverRequest<{ editions?: unknown }>(ISBN_QUERY, { isbn });
+      return mapEdition(data);
     }),
 });

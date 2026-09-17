@@ -11,6 +11,22 @@ Anything marked **Breaking** changes behaviour that an existing caller depends o
 
 ## Unreleased
 
+### Scan a barcode to add a book
+
+The Scan segment of the add-a-book sheet is real. `expo-camera` reads the EAN-13 on the back of a book, `book.byIsbn` resolves it, and the match panel confirms the edition before it reaches the shelf.
+
+The lookup deliberately avoids `book.search`: Typesense matches ISBNs fuzzily and returns a book whose own `isbns` lack the queried number, so scanning through it would file the wrong edition. Hardcover's `editions` query matches exactly and returns the book, its cover, its authors and the edition's page count in one request. See [Book search](/docs/book-search#scanning-a-barcode-isbns-go-through-editions-never-search).
+
+Confirming a scan calls the same `pickBook` a tapped search result does, so one path still creates shelves — status chips and all. The canvas's OCR "no barcode" branch is not built, because there is no OCR service behind it; it falls back to Enter by hand. Scanning needs a real device: the iOS simulator has no camera.
+
+### The add-a-book dialog, rebuilt from the design canvas
+
+The new-shelf form was a card in the page flow; the canvas draws it as a bottom sheet, so it is one — HeroUI's `Popover` in its `bottom-sheet` presentation, controlled by the screen's own state rather than a `Popover.Trigger`, since it opens from two places. With it came the canvas's header, its three segments, its copy, and its 34×50 result swatch.
+
+Search results now arrive five at a time with arrows to page through them, which needed a `page` input on `book.search` — it had hardcoded page 1. A short page is the last one, so the forward arrow disables without a total count the mapper never returned. Results render only while a search is live for what is typed, because the query cache would otherwise hand a reopened sheet the previous search's books.
+
+Saving a word now invalidates from `useCaptureWord`, the shared capture path, `word.quiz` included — which is what had left Today's "Due today" stale after a capture.
+
 ### Covers come from Hardcover again, with Open Library as the fallback
 
 `mapSearchResults` reads Hardcover's own `image.url` first and falls back to `openLibraryCoverUrl`. On 27 measured results Hardcover covered 19 where Open Library covered 7, and a shelf of blank tiles is what readers notice first.
