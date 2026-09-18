@@ -17,7 +17,9 @@ The Scan segment of the add-a-book sheet is real. `expo-camera` reads the EAN-13
 
 The lookup deliberately avoids `book.search`: Typesense matches ISBNs fuzzily and returns a book whose own `isbns` lack the queried number, so scanning through it would file the wrong edition. Hardcover's `editions` query matches exactly and returns the book, its cover, its authors and the edition's page count in one request. See [Book search](/docs/book-search#scanning-a-barcode-isbns-go-through-editions-never-search).
 
-Confirming a scan calls the same `pickBook` a tapped search result does, so one path still creates shelves — status chips and all. The canvas's OCR "no barcode" branch is not built, because there is no OCR service behind it; it falls back to Enter by hand. Scanning needs a real device: the iOS simulator has no camera.
+Confirming a scan calls the same `pickBook` a tapped search result does, so one path still creates shelves — status chips and all. The canvas's OCR "no barcode" branch is not built, because there is no OCR service behind it; it falls back to Enter by hand.
+
+**A photo works too.** "Choose a photo instead" picks an image and runs `scanFromURLAsync` — the same decoder over a still frame. It needs no camera permission, so it is offered even when the camera has been refused, and it is the only way to exercise scanning on a simulator, which has no camera. The live viewfinder still needs a real device, and the config plugins' permission strings need a development build.
 
 ### The add-a-book dialog, rebuilt from the design canvas
 

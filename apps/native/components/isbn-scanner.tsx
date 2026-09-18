@@ -1,7 +1,9 @@
-import { CameraView, useCameraPermissions } from "expo-camera";
-import { useEffect, useRef } from "react";
+import { CameraView, scanFromURLAsync, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
+import { Notice } from "@/components/notice";
 import { usePalette } from "@/lib/palette";
 
 /**
@@ -32,12 +34,77 @@ export function IsbnScanner({
   const [permission, requestPermission] = useCameraPermissions();
   const palette = usePalette();
   const lastScanned = useRef<string | null>(null);
+  const [photoError, setPhotoError] = useState<{ title: string; body: string } | null>(null);
 
   // Re-arming forgets the last code, so pointing at the same book again after
   // "Not this one" still registers.
   useEffect(() => {
     if (isArmed) lastScanned.current = null;
   }, [isArmed]);
+
+  /**
+   * The same decoder, run over a still image instead of the live preview.
+   *
+   * This needs no camera permission — the picker hands back a file — so it is
+   * the way in when the camera is blocked, when the book is not to hand, and on
+   * a simulator, which has no camera at all.
+   */
+  async function scanFromPhoto() {
+    setPhotoError(null);
+
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: "images" });
+    if (picked.canceled) return;
+
+    const uri = picked.assets?.[0]?.uri;
+    if (!uri) return;
+
+    try {
+      const [found] = await scanFromURLAsync(uri, ["ean13", "upc_a"]);
+      if (!found) {
+        setPhotoError({
+          title: "No barcode in that photo",
+          body: "A straight, close shot of the back cover reads best — fill the frame with the stripes.",
+        });
+        return;
+      }
+      onScanned(found.data);
+    } catch {
+      // An unreadable file, or a format the decoder will not open.
+      setPhotoError({
+        title: "That image could not be opened",
+        body: "Some screenshots and edited files lose the barcode. A photo taken of the book works best.",
+      });
+    }
+  }
+
+  const photoOption = (
+    <>
+      {photoError ? (
+        <Notice
+          tone="warn"
+          title={photoError.title}
+          body={photoError.body}
+          action={
+            <Pressable onPress={scanFromPhoto} accessibilityRole="button" className="mt-2">
+              <Text className="font-serif-semibold text-[12.5px] text-primary">
+                Try another photo
+              </Text>
+            </Pressable>
+          }
+        />
+      ) : (
+        <Pressable
+          onPress={scanFromPhoto}
+          accessibilityRole="button"
+          className="min-h-[44px] items-center justify-center rounded-card border border-surface-strong active:opacity-60"
+        >
+          <Text className="font-serif-semibold text-[13px] text-foreground">
+            Choose a photo instead
+          </Text>
+        </Pressable>
+      )}
+    </>
+  );
 
   if (!permission) {
     // Permissions are still loading — a blank box rather than a flash of the
@@ -49,13 +116,15 @@ export function IsbnScanner({
     const isBlocked = !permission.canAskAgain;
     return (
       <View className="mb-4 gap-3">
-        <View className="h-[186px] items-center justify-center bg-surface-strong px-6">
-          <Text className="font-serif text-center text-[13.5px] leading-[20px] text-muted">
-            {isBlocked
-              ? "The camera is turned off for GlossNote. Settings will let it back in — or put the book on the shelf by hand."
-              : "Scanning needs the camera. Nothing is recorded or uploaded: the barcode is read on this phone."}
-          </Text>
-        </View>
+        <Notice
+          tone={isBlocked ? "warn" : "info"}
+          title={isBlocked ? "The camera is off for GlossNote" : "Scanning needs the camera"}
+          body={
+            isBlocked
+              ? "Settings › GlossNote › Camera turns it back on. A photo of the barcode works without it."
+              : "The barcode is read on this phone. Nothing is recorded, and no image is uploaded."
+          }
+        />
 
         {!isBlocked ? (
           <Pressable
@@ -68,6 +137,8 @@ export function IsbnScanner({
             </Text>
           </Pressable>
         ) : null}
+
+        {photoOption}
 
         <Pressable
           onPress={onEnterByHand}
@@ -111,10 +182,17 @@ export function IsbnScanner({
         </Text>
       </View>
 
-      <Text className="font-serif text-[14.5px] leading-[22px] text-muted">
-        Point at the barcode on the back. We read the ISBN, so you get the right edition, cover and
-        page count.
-      </Text>
+      <View>
+        <Text className="font-serif-semibold text-[14.5px] leading-[20px] text-foreground">
+          Point at the barcode on the back
+        </Text>
+        <Text className="font-serif mt-1 text-[12.5px] leading-[19px] text-muted">
+          Reading the ISBN gets you the right edition — its cover, and its page count for reading
+          progress.
+        </Text>
+      </View>
+
+      {photoOption}
 
       <Pressable
         onPress={onEnterByHand}

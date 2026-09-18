@@ -51,6 +51,12 @@
           "cameraPermission": "Allow GlossNote to scan a book's barcode.",
           "barcodeScannerEnabled": true
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow GlossNote to read a barcode from a photo you choose."
+        }
       ]
     ],
     "experiments": {

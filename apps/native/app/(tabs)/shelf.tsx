@@ -22,6 +22,7 @@ import z from "zod";
 
 import { BookCover, CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
+import { Notice } from "@/components/notice";
 import { IsbnScanner } from "@/components/isbn-scanner";
 import { TextField } from "@/components/text-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -264,7 +265,11 @@ export default function ShelfScreen() {
           if (!isOpen) closeForm();
         }}
       >
-        <Popover.Portal>
+        {/* On iOS the portal renders in a FullWindowOverlay, which sits above
+            native modals — so the system photo picker opened from the scanner
+            came up behind this sheet. A plain View lets the picker present over
+            it. */}
+        <Popover.Portal disableFullWindowOverlay>
           <Popover.Overlay />
           {/* `extend` grows the sheet by the keyboard's height rather than
               sliding it, so the field being typed into stays put. */}
@@ -396,10 +401,13 @@ export default function ShelfScreen() {
                 {/* Search needs connectivity; typing a title below always works,
                     which is the offline fallback UserFlow §2 asks for. */}
                 {bookResults.error && (
-                  <Text className="font-serif text-muted text-xs mt-2">
-                    {bookResults.error.message} You can still type a title
-                    below.
-                  </Text>
+                  <View className="mt-2">
+                    <Notice
+                      tone="warn"
+                      title="Book search is unavailable"
+                      body={`${bookResults.error.message} Entering the title by hand still works.`}
+                    />
+                  </View>
                 )}
 
                 {bookHits.map((hit) => (
@@ -441,10 +449,12 @@ export default function ShelfScreen() {
                 ))}
 
                 {isSearchingBooks && !bookResults.isFetching && bookHits.length === 0 && bookPage === 1 && (
-                  <Text className="font-serif text-muted text-xs mt-2">
-                    Nothing matched that. You can still put it on the shelf
-                    yourself.
-                  </Text>
+                  <View className="mt-2">
+                    <Notice
+                      title="Nothing matched that"
+                      body="Try the author's name, or put it on the shelf yourself — a typed title works the same."
+                    />
+                  </View>
                 )}
 
                 {/* Paging. A short page is the last one — Hardcover's total
@@ -492,8 +502,11 @@ export default function ShelfScreen() {
                     onEnterByHand={() => setAddMode("manual")}
                   />
                 ) : scanLookup.isPending ? (
-                  <View className="h-[186px] items-center justify-center">
+                  <View className="h-[186px] items-center justify-center gap-3">
                     <Spinner />
+                    <Text className="font-serif text-[12.5px] text-muted">
+                      Looking up ISBN {scannedIsbn}
+                    </Text>
                   </View>
                 ) : scanLookup.data ? (
                   <View className="mb-1">
@@ -503,6 +516,10 @@ export default function ShelfScreen() {
                         ISBN {scannedIsbn}
                       </Text>
                     </View>
+
+                    <Text className="mb-3 font-serif-semibold text-[16px] text-foreground">
+                      Is this the book?
+                    </Text>
 
                     <View className="mb-2 flex-row items-start gap-4">
                       <BookCover
@@ -533,8 +550,8 @@ export default function ShelfScreen() {
                     </View>
 
                     <Text className="font-serif mb-4 mt-2.5 text-[12.5px] leading-[19px] text-muted">
-                      Matched exactly from the ISBN — the edition and page count are the ones in
-                      your hands.
+                      Matched from the barcode itself, so this is the edition in your hands — cover
+                      and page count included.
                     </Text>
 
                     <Button
@@ -560,10 +577,13 @@ export default function ShelfScreen() {
                   </View>
                 ) : (
                   <View className="mb-1">
-                    <Text className="font-serif mb-4 text-[14px] leading-[21px] text-muted">
-                      Nothing on that barcode. Hardcover may not have this edition — you can still
-                      put it on the shelf yourself.
-                    </Text>
+                    <View className="mb-4">
+                      <Notice
+                        tone="warn"
+                        title="That barcode isn't in the catalogue"
+                        body="It may be a new or unusual printing. Typing the title works just as well — the words you save count the same."
+                      />
+                    </View>
                     <Button onPress={() => setAddMode("manual")}>
                       <Button.Label className="font-serif-medium">Enter it by hand</Button.Label>
                     </Button>
