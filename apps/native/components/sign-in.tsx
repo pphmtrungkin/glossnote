@@ -1,7 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { Button, Spinner, useToast } from "heroui-native";
 import { useRef } from "react";
-import { TextInput, View } from "react-native";
+import { type TextInput, View } from "react-native";
 import z from "zod";
 
 import { TextField } from "@/components/text-field";

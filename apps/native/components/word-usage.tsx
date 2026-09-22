@@ -32,7 +32,9 @@ export function WordUsage({
 
   return (
     <View className="mt-6">
-      <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">In use</Text>
+      <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">
+        In use
+      </Text>
 
       <View className="mt-3 gap-3">
         {sentences.map((parsed) => {
@@ -58,7 +60,9 @@ export function WordUsage({
         ) : null}
       </View>
 
-      {usageNote ? <Text className="font-serif mt-3 text-[13.5px] leading-[21px] text-muted">{usageNote}</Text> : null}
+      {usageNote ? (
+        <Text className="font-serif mt-3 text-[13.5px] leading-[21px] text-muted">{usageNote}</Text>
+      ) : null}
     </View>
   );
 }

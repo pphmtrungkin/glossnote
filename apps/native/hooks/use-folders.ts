@@ -19,7 +19,12 @@ export type FolderRow = {
   bookId: string | null;
   currentPage: number | null;
   wordCount: number;
-  book: { title: string; authors: string[]; coverImageUrl: string | null; pages: number | null } | null;
+  book: {
+    title: string;
+    authors: string[];
+    coverImageUrl: string | null;
+    pages: number | null;
+  } | null;
 };
 
 export function useFolders() {

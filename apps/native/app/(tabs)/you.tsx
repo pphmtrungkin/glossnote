@@ -9,12 +9,12 @@ import { ReadingThemeSwatches } from "@/components/reading-theme-picker";
 import { useFolders } from "@/hooks/use-folders";
 import { authClient } from "@/lib/auth-client";
 import {
+  type DownloadProgress,
   formatBytes,
   installPack,
   packUrl,
   readPackInstall,
   removePack,
-  type DownloadProgress,
 } from "@/lib/dictionary-pack";
 import { queryClient as appQueryClient, trpc } from "@/utils/trpc";
 
@@ -71,9 +71,7 @@ function Row({
       {isBusy ? (
         <Spinner size="sm" />
       ) : value ? (
-        <Text
-          className={`font-serif-semibold text-[13.5px] ${valueClassName ?? "text-muted"}`}
-        >
+        <Text className={`font-serif-semibold text-[13.5px] ${valueClassName ?? "text-muted"}`}>
           {value}
         </Text>
       ) : null}
@@ -84,8 +82,12 @@ function Row({
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   return (
     <View className="flex-1 items-center">
-      <Text className="font-serif-semibold text-[24px] leading-[28px] text-foreground">{value ?? "–"}</Text>
-      <Text className="font-serif mt-1 text-[10px] uppercase tracking-[1.2px] text-muted">{label}</Text>
+      <Text className="font-serif-semibold text-[24px] leading-[28px] text-foreground">
+        {value ?? "–"}
+      </Text>
+      <Text className="font-serif mt-1 text-[10px] uppercase tracking-[1.2px] text-muted">
+        {label}
+      </Text>
     </View>
   );
 }
@@ -106,8 +108,7 @@ export default function YouScreen() {
   const preference = useQuery(trpc.preference.get.queryOptions());
   const updatePreference = useMutation(
     trpc.preference.update.mutationOptions({
-      onSuccess: () =>
-        queryClient.invalidateQueries({ queryKey: trpc.preference.get.queryKey() }),
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: trpc.preference.get.queryKey() }),
       onError: (error) => toast.show({ variant: "danger", label: error.message }),
     }),
   );
@@ -183,7 +184,9 @@ export default function YouScreen() {
       <Text className="mt-3 font-serif-semibold text-[27px] leading-[31px] tracking-[-0.6px] text-foreground">
         {user?.name || "You"}
       </Text>
-      {user?.email ? <Text className="font-serif mt-1 text-[13.5px] text-muted">{user.email}</Text> : null}
+      {user?.email ? (
+        <Text className="font-serif mt-1 text-[13.5px] text-muted">{user.email}</Text>
+      ) : null}
 
       {/* ---- What they have ------------------------------------------------ */}
       <View className="mt-6 mb-8 flex-row border-y border-surface-strong py-4">
@@ -195,7 +198,9 @@ export default function YouScreen() {
       <Group title="Appearance">
         {/* The app's only page-colour control. It applies everywhere and is
             remembered on this device between launches. */}
-        <Text className="font-serif mb-3 text-[12.5px] text-muted">Page colour, everywhere in the app.</Text>
+        <Text className="font-serif mb-3 text-[12.5px] text-muted">
+          Page colour, everywhere in the app.
+        </Text>
         <ReadingThemeSwatches />
       </Group>
 
@@ -278,8 +283,8 @@ export default function YouScreen() {
       </Group>
 
       <Text className="font-serif text-[12.5px] leading-[20px] text-muted">
-        Words you save stay yours. Only how often a word was saved crosses between readers, and only from shelves
-        you make public.
+        Words you save stay yours. Only how often a word was saved crosses between readers, and only
+        from shelves you make public.
       </Text>
     </Container>
   );

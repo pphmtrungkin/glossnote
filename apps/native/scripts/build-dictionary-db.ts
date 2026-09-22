@@ -13,15 +13,24 @@
 //
 // Both write the same `dictionary` table that apps/native/lib/local-db.ts
 // creates — the only difference is the `source` value stamped on each row.
-import { normalizeTerm } from "@better-vocab/domain";
+
 import { Database } from "bun:sqlite";
 import { readFileSync, rmSync } from "node:fs";
+import { normalizeTerm } from "@better-vocab/domain";
 
-type Entry = { term: string; definition: string; partOfSpeech?: string; exampleSentence?: string; rank?: number };
+type Entry = {
+  term: string;
+  definition: string;
+  partOfSpeech?: string;
+  exampleSentence?: string;
+  rank?: number;
+};
 
 const [, , mode, sourcePath, outputPath] = process.argv;
 if ((mode !== "core" && mode !== "extended") || !sourcePath || !outputPath) {
-  throw new Error("Usage: bun run scripts/build-dictionary-db.ts <core|extended> <source.json> <output.db>");
+  throw new Error(
+    "Usage: bun run scripts/build-dictionary-db.ts <core|extended> <source.json> <output.db>",
+  );
 }
 
 const entries: Entry[] = JSON.parse(readFileSync(sourcePath, "utf-8"));
@@ -61,7 +70,14 @@ db.transaction(() => {
     // core is one-sense-per-term, so rank is pinned to 0 and the unique index
     // silently drops any duplicate term the source file still carries.
     const rank = mode === "core" ? 0 : (entry.rank ?? 0);
-    insert.run(normalized, entry.definition, entry.partOfSpeech ?? null, entry.exampleSentence ?? null, mode, rank);
+    insert.run(
+      normalized,
+      entry.definition,
+      entry.partOfSpeech ?? null,
+      entry.exampleSentence ?? null,
+      mode,
+      rank,
+    );
   }
 })();
 

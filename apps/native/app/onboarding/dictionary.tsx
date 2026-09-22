@@ -7,11 +7,11 @@ import { Text, View } from "react-native";
 import { Container } from "@/components/container";
 import { useFinishOnboarding } from "@/hooks/use-finish-onboarding";
 import {
+  type DownloadProgress,
   formatBytes,
   installPack,
   packUrl,
   readPackInstall,
-  type DownloadProgress,
 } from "@/lib/dictionary-pack";
 import { trpc } from "@/utils/trpc";
 

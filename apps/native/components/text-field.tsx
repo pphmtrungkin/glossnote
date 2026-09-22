@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { forwardRef, useState } from "react";
-import { Pressable, Text, TextInput, View, type TextInputProps } from "react-native";
+import { Pressable, Text, TextInput, type TextInputProps, View } from "react-native";
 
 import { usePalette } from "@/lib/palette";
 

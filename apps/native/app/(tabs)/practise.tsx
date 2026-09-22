@@ -29,7 +29,9 @@ const WAITING_LIMIT = 50;
 /** Section label — the same small tracked kicker the rest of the app uses. */
 function Kicker({ children }: { children: string }) {
   return (
-    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.6px] text-muted">{children}</Text>
+    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.6px] text-muted">
+      {children}
+    </Text>
   );
 }
 
@@ -42,7 +44,8 @@ export default function PractiseScreen() {
   const waitingLabel = cards.length >= WAITING_LIMIT ? `${WAITING_LIMIT}+` : String(cards.length);
 
   const waitingByShelf = new Map<string, number>();
-  for (const card of cards) waitingByShelf.set(card.folderId, (waitingByShelf.get(card.folderId) ?? 0) + 1);
+  for (const card of cards)
+    waitingByShelf.set(card.folderId, (waitingByShelf.get(card.folderId) ?? 0) + 1);
   const shelves = (folders.data ?? []).filter((shelf) => waitingByShelf.has(shelf.id));
 
   return (
@@ -73,12 +76,14 @@ export default function PractiseScreen() {
         // A word becomes a card only once its definition has example
         // sentences to blank out — see word.quiz.
         <Text className="font-serif mt-4 text-[13px] leading-[20px] text-muted">
-          Words become cards once their definition has an example to work from. Save a few more, and check
-          back.
+          Words become cards once their definition has an example to work from. Save a few more, and
+          check back.
         </Text>
       )}
 
-      {waiting.error ? <Text className="font-serif mt-4 text-[13px] text-danger">{waiting.error.message}</Text> : null}
+      {waiting.error ? (
+        <Text className="font-serif mt-4 text-[13px] text-danger">{waiting.error.message}</Text>
+      ) : null}
 
       {/* ---- By shelf ------------------------------------------------------ */}
       {shelves.length > 0 ? (
@@ -102,7 +107,10 @@ export default function PractiseScreen() {
                   className="h-[60px] w-[40px]"
                 />
                 <View className="flex-1">
-                  <Text className="font-serif-semibold text-[16px] leading-[20px] text-foreground" numberOfLines={2}>
+                  <Text
+                    className="font-serif-semibold text-[16px] leading-[20px] text-foreground"
+                    numberOfLines={2}
+                  >
                     {shelf.title}
                   </Text>
                   <Text className="font-serif mt-0.5 text-[12px] text-muted">
@@ -130,13 +138,21 @@ export default function PractiseScreen() {
               >
                 <Pressable className="border-b border-surface-strong py-3">
                   <View className="flex-row items-baseline gap-2.5">
-                    <Text className="font-serif-semibold text-[17px] leading-[20px] text-foreground">{word.term}</Text>
-                    <Text className="font-serif flex-1 text-right text-[11.5px] text-muted" numberOfLines={1}>
+                    <Text className="font-serif-semibold text-[17px] leading-[20px] text-foreground">
+                      {word.term}
+                    </Text>
+                    <Text
+                      className="font-serif flex-1 text-right text-[11.5px] text-muted"
+                      numberOfLines={1}
+                    >
                       {word.folder.title}
                     </Text>
                   </View>
                   {definition ? (
-                    <Text className="font-serif mt-1 text-[13px] leading-[19px] text-muted" numberOfLines={1}>
+                    <Text
+                      className="font-serif mt-1 text-[13px] leading-[19px] text-muted"
+                      numberOfLines={1}
+                    >
                       {definition}
                     </Text>
                   ) : null}

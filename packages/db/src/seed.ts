@@ -176,7 +176,13 @@ async function seed() {
   // book-linked folder per book per user; the freeform folder carries a null
   // bookId and is exempt.
   await db.insert(folder).values([
-    { id: "seed_folder_dune", userId: USER_ID, bookId: "seed_book_dune", title: "Dune", status: "reading" },
+    {
+      id: "seed_folder_dune",
+      userId: USER_ID,
+      bookId: "seed_book_dune",
+      title: "Dune",
+      status: "reading",
+    },
     {
       id: "seed_folder_pale_fire",
       userId: USER_ID,
@@ -184,7 +190,13 @@ async function seed() {
       title: "Pale Fire",
       status: "finished",
     },
-    { id: "seed_folder_misc", userId: USER_ID, bookId: null, title: "Words from podcasts", status: "misc" },
+    {
+      id: "seed_folder_misc",
+      userId: USER_ID,
+      bookId: null,
+      title: "Words from podcasts",
+      status: "misc",
+    },
   ]);
 
   // --- Captured words ------------------------------------------------------

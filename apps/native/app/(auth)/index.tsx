@@ -39,8 +39,8 @@ export default function WelcomeScreen() {
             </Text>
 
             <Text className="font-serif max-w-[280px] text-[16px] leading-[26px] text-muted">
-              Say a word out loud or type it. We'll tell you what it means —
-              then it files itself onto the book's shelf.
+              Say a word out loud or type it. We'll tell you what it means — then it files itself
+              onto the book's shelf.
             </Text>
           </View>
 

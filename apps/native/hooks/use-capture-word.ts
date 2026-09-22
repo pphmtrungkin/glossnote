@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSQLiteContext } from "expo-sqlite";
 
-import { enqueueCapture, isOfflineError, type Capture } from "@/lib/pending-sync";
+import { type Capture, enqueueCapture, isOfflineError } from "@/lib/pending-sync";
 import { trpc, trpcClient } from "@/utils/trpc";
 
 /**
@@ -22,10 +22,12 @@ import { trpc, trpcClient } from "@/utils/trpc";
  */
 export type CaptureOutcome = { status: "saved"; wordId: string } | { status: "queued" };
 
-export function useCaptureWord(options: {
-  onSettled?: (outcome: CaptureOutcome) => unknown;
-  onError?: (error: Error) => unknown;
-} = {}) {
+export function useCaptureWord(
+  options: {
+    onSettled?: (outcome: CaptureOutcome) => unknown;
+    onError?: (error: Error) => unknown;
+  } = {},
+) {
   const db = useSQLiteContext();
   const queryClient = useQueryClient();
 

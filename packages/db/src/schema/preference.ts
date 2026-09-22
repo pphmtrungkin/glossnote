@@ -31,4 +31,3 @@ export const userPreferenceRelations = relations(userPreference, ({ one }) => ({
 export const userPreferenceUserRelations = relations(user, ({ one }) => ({
   preference: one(userPreference, { fields: [user.id], references: [userPreference.userId] }),
 }));
-

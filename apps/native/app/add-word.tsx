@@ -27,7 +27,9 @@ const addWordSchema = z.object({
 /** Section label — the same small tracked kicker the rest of the app uses. */
 function Kicker({ children }: { children: string }) {
   return (
-    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">{children}</Text>
+    <Text className="font-serif-semibold text-[10px] uppercase tracking-[1.4px] text-muted">
+      {children}
+    </Text>
   );
 }
 
@@ -148,7 +150,9 @@ export default function AddWordScreen() {
   const readerTerms = new Set(readerWords.map((match) => match.normalizedTerm));
   const dictionaryWords =
     typed.length >= 2
-      ? (dictionaryMatches.data ?? []).filter((word) => word !== normalizeTerm(term) && !readerTerms.has(word))
+      ? (dictionaryMatches.data ?? []).filter(
+          (word) => word !== normalizeTerm(term) && !readerTerms.has(word),
+        )
       : [];
 
   return (
@@ -215,7 +219,9 @@ export default function AddWordScreen() {
                 accessibilityLabel={`Use ${match.term}`}
                 className="flex-row items-baseline justify-between gap-3 border-b border-surface-strong py-2.5"
               >
-                <Text className="flex-1 font-serif-semibold text-[16px] text-foreground">{match.term}</Text>
+                <Text className="flex-1 font-serif-semibold text-[16px] text-foreground">
+                  {match.term}
+                </Text>
                 <Text className="font-serif text-[11px] text-muted">
                   {match.readers === 1 ? "1 reader" : `${match.readers} readers`}
                 </Text>
@@ -274,14 +280,18 @@ export default function AddWordScreen() {
         ) : suggestion ? (
           <Surface variant="secondary" className="p-4 rounded-lg">
             <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-foreground font-serif-semibold text-base">{suggestion.term}</Text>
+              <Text className="text-foreground font-serif-semibold text-base">
+                {suggestion.term}
+              </Text>
               {suggestion.partOfSpeech ? (
                 <Chip size="sm" variant="soft" color="default">
                   <Chip.Label className="font-serif-medium">{suggestion.partOfSpeech}</Chip.Label>
                 </Chip>
               ) : null}
             </View>
-            <Text className="text-foreground text-[15px] font-serif leading-6">{suggestion.definition}</Text>
+            <Text className="text-foreground text-[15px] font-serif leading-6">
+              {suggestion.definition}
+            </Text>
             <Text className="font-serif text-muted text-xs mt-2">
               {suggestion.fromNetwork ? "Found online." : "From your offline dictionary."}
             </Text>
@@ -305,7 +315,11 @@ export default function AddWordScreen() {
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(isSubmitting) => (
             <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-              {isSubmitting ? <Spinner size="sm" color="default" /> : <Button.Label className="font-serif-medium">Save word</Button.Label>}
+              {isSubmitting ? (
+                <Spinner size="sm" color="default" />
+              ) : (
+                <Button.Label className="font-serif-medium">Save word</Button.Label>
+              )}
             </Button>
           )}
         </form.Subscribe>

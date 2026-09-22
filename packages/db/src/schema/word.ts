@@ -1,5 +1,13 @@
 import { relations } from "drizzle-orm";
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { book, folder } from "./book";
@@ -9,7 +17,9 @@ import { captureMethodEnum } from "./enums";
 export const word = pgTable(
   "word",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     // Denormalized alongside folderId so "search/filter across all folders"
     // doesn't need a join through folder just to scope by owner.
     userId: text("user_id")
@@ -27,7 +37,9 @@ export const word = pgTable(
     term: text("term").notNull(),
     normalizedTerm: text("normalized_term").notNull(),
     // Null while "pending definition" (offline, not yet resolved).
-    dictionaryEntryId: text("dictionary_entry_id").references(() => dictionaryEntry.id, { onDelete: "set null" }),
+    dictionaryEntryId: text("dictionary_entry_id").references(() => dictionaryEntry.id, {
+      onDelete: "set null",
+    }),
     // The definition this user's device showed at capture, kept only when no
     // shared dictionaryEntry existed yet (an offline capture). Written once by
     // word.create and never edited — definitions are not user-editable — and it
@@ -82,5 +94,7 @@ export const wordRelations = relations(word, ({ one }) => ({
 
 export const folderWordsRelations = relations(folder, ({ many }) => ({ words: many(word) }));
 export const bookWordsRelations = relations(book, ({ many }) => ({ words: many(word) }));
-export const dictionaryEntryWordsRelations = relations(dictionaryEntry, ({ many }) => ({ words: many(word) }));
+export const dictionaryEntryWordsRelations = relations(dictionaryEntry, ({ many }) => ({
+  words: many(word),
+}));
 export const userWordsRelations = relations(user, ({ many }) => ({ words: many(word) }));

@@ -1,7 +1,7 @@
-import { FOLDER_STATUSES, FOLDER_VISIBILITIES } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { folder } from "@better-vocab/db/schema/book";
 import { word } from "@better-vocab/db/schema/word";
+import { FOLDER_STATUSES, FOLDER_VISIBILITIES } from "@better-vocab/domain";
 import { TRPCError } from "@trpc/server";
 import { count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -80,7 +80,10 @@ export const folderRouter = router({
         // folder_userId_bookId_uidx: one folder per book per user. Unreachable
         // before book search existed; a normal mistake now that it does.
         if (violates(error, "folder_userId_bookId_uidx")) {
-          throw new TRPCError({ code: "CONFLICT", message: "You already have a folder for this book." });
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "You already have a folder for this book.",
+          });
         }
         throw error;
       }
@@ -131,11 +134,13 @@ export const folderRouter = router({
       return assertOwned(updated, "Folder");
     }),
 
-  delete: protectedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
-    const [deleted] = await db
-      .delete(folder)
-      .where(ownedBy(folder, input.id, ctx.session.user.id))
-      .returning({ id: folder.id });
-    return assertOwned(deleted, "Folder");
-  }),
+  delete: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [deleted] = await db
+        .delete(folder)
+        .where(ownedBy(folder, input.id, ctx.session.user.id))
+        .returning({ id: folder.id });
+      return assertOwned(deleted, "Folder");
+    }),
 });

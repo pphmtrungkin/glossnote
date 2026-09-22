@@ -26,10 +26,11 @@
 // a thousand words. The entries files are the whole vocabulary.
 //
 // Usage: bun run scripts/wordnet-to-dictionary.ts <output-dir> [edition]
-import { $ } from "bun";
+
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { $ } from "bun";
 
 const [, , outputDir, edition = "2025"] = process.argv;
 if (!outputDir) {
@@ -100,12 +101,20 @@ const POS_LABEL: Record<string, string> = {
 };
 
 type SynsetInfo = { definition: string; example: string | null; partOfSpeech: string };
-type DictionaryEntry = { term: string; definition: string; partOfSpeech: string; exampleSentence: string | null };
+type DictionaryEntry = {
+  term: string;
+  definition: string;
+  partOfSpeech: string;
+  exampleSentence: string | null;
+};
 
 /** An example is usually a plain sentence, but an attributed quotation is an
  *  object instead. Both appear in the same array, in the same file. */
 type Example = string | { text: string; source?: string };
-type SynsetDoc = Record<string, { definition?: string[]; example?: Example[]; partOfSpeech: string }>;
+type SynsetDoc = Record<
+  string,
+  { definition?: string[]; example?: Example[]; partOfSpeech: string }
+>;
 
 /** One lemma's senses, already in WordNet's sense order within each part of
  *  speech. The `synset` value is the full `NNNNNNNN-p` id. */
@@ -204,7 +213,9 @@ async function main() {
 
     await Bun.write(`${outputDir}/dictionary-core.json`, JSON.stringify(core));
     await Bun.write(`${outputDir}/dictionary-extended.json`, JSON.stringify(extended));
-    console.log(`Wrote ${core.length} core entries and ${extended.length} extended entries to ${outputDir}`);
+    console.log(
+      `Wrote ${core.length} core entries and ${extended.length} extended entries to ${outputDir}`,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

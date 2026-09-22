@@ -10,8 +10,8 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import { type SQLiteDatabase, SQLiteProvider, useSQLiteContext } from "expo-sqlite";
 import { StatusBar } from "expo-status-bar";
-import { SQLiteProvider, useSQLiteContext, type SQLiteDatabase } from "expo-sqlite";
 import * as SystemUI from "expo-system-ui";
 import { HeroUINativeProvider, Spinner } from "heroui-native";
 import { useEffect, useState } from "react";
@@ -23,9 +23,9 @@ import { AppThemeProvider, useAppTheme } from "@/contexts/app-theme-context";
 import { usePendingSync } from "@/hooks/use-pending-sync";
 import { authClient } from "@/lib/auth-client";
 import { installBundledCore } from "@/lib/dictionary-pack";
-import { usePalette } from "@/lib/palette";
 import { LOCAL_DB_NAME, migrateLocalDb } from "@/lib/local-db";
-import { ONBOARDING_QUERY_KEY, hasSeenOnboarding } from "@/lib/onboarding";
+import { hasSeenOnboarding, ONBOARDING_QUERY_KEY } from "@/lib/onboarding";
+import { usePalette } from "@/lib/palette";
 import { queryClient } from "@/utils/trpc";
 
 // Held until the reading font is registered and the stored page colour has

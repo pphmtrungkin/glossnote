@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback } from "react";
 
-import { ONBOARDING_QUERY_KEY, markOnboardingSeen } from "@/lib/onboarding";
+import { markOnboardingSeen, ONBOARDING_QUERY_KEY } from "@/lib/onboarding";
 
 /**
  * Ends the tour: stamp the device, then tell the root layout to re-read it.

@@ -72,7 +72,7 @@ function waitingLine(count: number) {
   if (count === 0) return "Nothing is waiting to be practised.";
   // The quiz page is capped, so a full page means "at least this many".
   const amount =
-    count >= DUE_COUNT_LIMIT ? `${DUE_COUNT_LIMIT}+` : NUMBER_WORDS[count] ?? String(count);
+    count >= DUE_COUNT_LIMIT ? `${DUE_COUNT_LIMIT}+` : (NUMBER_WORDS[count] ?? String(count));
   return `${amount} ${count === 1 ? "word is" : "words are"} waiting to be practised.`;
 }
 
@@ -200,7 +200,9 @@ export default function HomeScreen() {
                   <View className="mb-1.5 h-0.5 bg-surface-strong">
                     <View
                       className="h-0.5 bg-primary"
-                      style={{ width: `${Math.min(current.currentPage / current.book.pages, 1) * 100}%` }}
+                      style={{
+                        width: `${Math.min(current.currentPage / current.book.pages, 1) * 100}%`,
+                      }}
                     />
                   </View>
                 ) : null}

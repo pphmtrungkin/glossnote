@@ -18,4 +18,7 @@ export const captureMethodEnum = pgEnum("capture_method", CAPTURE_METHODS);
 
 export const dictionarySourceEnum = pgEnum("dictionary_source", DICTIONARY_SOURCES);
 
-export const offlineDictionaryTierEnum = pgEnum("offline_dictionary_tier", OFFLINE_DICTIONARY_TIERS);
+export const offlineDictionaryTierEnum = pgEnum(
+  "offline_dictionary_tier",
+  OFFLINE_DICTIONARY_TIERS,
+);

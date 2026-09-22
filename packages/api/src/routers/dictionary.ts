@@ -1,6 +1,6 @@
-import { normalizeTerm } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { dictionaryEntry } from "@better-vocab/db/schema/dictionary";
+import { normalizeTerm } from "@better-vocab/domain";
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -133,7 +133,9 @@ async function fetchDatamuseDefinition(normalizedTerm: string): Promise<string |
  * "none of these are words" from "couldn't check" and try again later rather
  * than keep an unchecked list.
  */
-export async function keepDictionaryWords(normalizedTerms: readonly string[]): Promise<Set<string> | null> {
+export async function keepDictionaryWords(
+  normalizedTerms: readonly string[],
+): Promise<Set<string> | null> {
   try {
     const checked = await Promise.all(
       normalizedTerms.map(async (term) => [term, await fetchDatamuseDefinition(term)] as const),
@@ -148,14 +150,18 @@ export async function keepDictionaryWords(normalizedTerms: readonly string[]): P
  * Inserts a new shared row. onConflictDoNothing covers two requests racing on
  * the same brand-new term; the loser re-reads the winner's row.
  */
-async function insertEntry(values: typeof dictionaryEntry.$inferInsert): Promise<DictionaryEntry | null> {
+async function insertEntry(
+  values: typeof dictionaryEntry.$inferInsert,
+): Promise<DictionaryEntry | null> {
   const [inserted] = await db
     .insert(dictionaryEntry)
     .values(values)
     .onConflictDoNothing({ target: dictionaryEntry.term })
     .returning();
   return (
-    inserted ?? (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, values.term) })) ?? null
+    inserted ??
+    (await db.query.dictionaryEntry.findFirst({ where: eq(dictionaryEntry.term, values.term) })) ??
+    null
   );
 }
 
@@ -210,14 +216,23 @@ async function resolveNewTerm(normalizedTerm: string): Promise<DictionaryEntry |
   const defined = await defineTerm(normalizedTerm);
   if (defined === "unknown") return rememberUnknown(normalizedTerm);
   if (defined) {
-    return insertEntry({ term: normalizedTerm, ...defined, source: "ai_enhanced", enrichedAt: new Date() });
+    return insertEntry({
+      term: normalizedTerm,
+      ...defined,
+      source: "ai_enhanced",
+      enrichedAt: new Date(),
+    });
   }
 
   // ponytail: an AI outage saves Datamuse's wording, which for a fiction term
   // Datamuse knows ("horcrux") is the book's meaning. Rare, since it needs a
   // failed call on a fiction word's first lookup; return null here instead if
   // that ever matters more than keeping lookups working through an outage.
-  const entry = await insertEntry({ term: normalizedTerm, definition: datamuseDefinition, source: "dictionary_api" });
+  const entry = await insertEntry({
+    term: normalizedTerm,
+    definition: datamuseDefinition,
+    source: "dictionary_api",
+  });
   return entry ? enrichOnce(entry) : null;
 }
 

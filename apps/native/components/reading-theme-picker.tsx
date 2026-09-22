@@ -3,10 +3,10 @@ import { useThemeColor } from "heroui-native";
 import { Platform, Pressable, Text, View } from "react-native";
 
 import {
-  READING_THEMES,
   READING_THEME_META,
-  useAppTheme,
+  READING_THEMES,
   type ReadingTheme,
+  useAppTheme,
 } from "@/contexts/app-theme-context";
 
 function Swatch({
@@ -44,7 +44,11 @@ function Swatch({
           Aa
         </Text>
       </View>
-      <Text className={isSelected ? "font-serif text-foreground text-xs" : "font-serif text-muted text-xs"}>
+      <Text
+        className={
+          isSelected ? "font-serif text-foreground text-xs" : "font-serif text-muted text-xs"
+        }
+      >
         {meta.label}
       </Text>
     </Pressable>

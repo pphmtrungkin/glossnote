@@ -104,7 +104,8 @@ const editionsSchema = z.looseObject({
  * openLibraryCoverUrl built. The row is shared by every reader of the book, so
  * an arbitrary URL from one client would be an image shown to all of them.
  */
-const OPEN_LIBRARY_COVER = /^https:\/\/covers\.openlibrary\.org\/b\/isbn\/[0-9X]{10,13}-M\.jpg\?default=false$/;
+const OPEN_LIBRARY_COVER =
+  /^https:\/\/covers\.openlibrary\.org\/b\/isbn\/[0-9X]{10,13}-M\.jpg\?default=false$/;
 const HARDCOVER_COVER = /^https:\/\/assets\.hardcover\.app\/[^\s"'<>]+$/;
 const isSharableCover = (url: string) => HARDCOVER_COVER.test(url) || OPEN_LIBRARY_COVER.test(url);
 
@@ -285,7 +286,10 @@ export async function upsertBook(input: BookInput): Promise<string> {
  * identically: no token, a rate limit, a transport error, and GraphQL's habit
  * of reporting failure with HTTP 200 and an `errors` array.
  */
-async function hardcoverRequest<T>(document: string, variables: Record<string, unknown>): Promise<T> {
+async function hardcoverRequest<T>(
+  document: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
   if (!env.HARDCOVER_API_TOKEN) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
@@ -303,7 +307,10 @@ async function hardcoverRequest<T>(document: string, variables: Record<string, u
   });
 
   if (response.status === 429) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Book search is rate limited — try again shortly." });
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: "Book search is rate limited — try again shortly.",
+    });
   }
   if (!response.ok) {
     throw new TRPCError({
@@ -314,7 +321,10 @@ async function hardcoverRequest<T>(document: string, variables: Record<string, u
 
   const payload = (await response.json()) as { data?: T; errors?: { message: string }[] };
   if (payload.errors?.length) {
-    throw new TRPCError({ code: "BAD_GATEWAY", message: `Book search failed: ${payload.errors[0]!.message}` });
+    throw new TRPCError({
+      code: "BAD_GATEWAY",
+      message: `Book search failed: ${payload.errors[0]!.message}`,
+    });
   }
 
   return (payload.data ?? {}) as T;

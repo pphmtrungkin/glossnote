@@ -1,6 +1,6 @@
-import { OFFLINE_DICTIONARY_TIERS, PREFERENCE_DEFAULTS } from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { userPreference } from "@better-vocab/db/schema/preference";
+import { OFFLINE_DICTIONARY_TIERS, PREFERENCE_DEFAULTS } from "@better-vocab/domain";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 

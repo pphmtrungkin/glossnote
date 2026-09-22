@@ -114,9 +114,14 @@ export default function SearchScreen() {
                         {mastery}
                       </Text>
                     </View>
-                    <Text className="font-serif mt-1 text-[13px] text-muted">{word.folder.title}</Text>
+                    <Text className="font-serif mt-1 text-[13px] text-muted">
+                      {word.folder.title}
+                    </Text>
                     {definition ? (
-                      <Text className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
+                      <Text
+                        className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted"
+                        numberOfLines={2}
+                      >
                         {definition}
                       </Text>
                     ) : null}

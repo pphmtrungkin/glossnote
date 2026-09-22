@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { StyleSheet, type ColorValue } from "react-native";
+import { type ColorValue, StyleSheet } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
 import { usePalette } from "@/lib/palette";
@@ -79,7 +79,9 @@ export default function TabLayout() {
           // design canvas does, so the navigation header would repeat it.
           headerShown: false,
           tabBarLabel: "Today",
-          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.today} color={color} focused={focused} />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon d={ICONS.today} color={color} focused={focused} />
+          ),
         }}
       />
       <Tabs.Screen
@@ -87,21 +89,27 @@ export default function TabLayout() {
         options={{
           title: "Shelf",
           tabBarLabel: "Library",
-          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.library} color={color} focused={focused} />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon d={ICONS.library} color={color} focused={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="practise"
         options={{
           title: "Practise",
-          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.practise} color={color} focused={focused} />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon d={ICONS.practise} color={color} focused={focused} />
+          ),
         }}
       />
       <Tabs.Screen
         name="you"
         options={{
           title: "You",
-          tabBarIcon: ({ color, focused }) => <TabIcon d={ICONS.you} color={color} focused={focused} />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon d={ICONS.you} color={color} focused={focused} />
+          ),
         }}
       />
     </Tabs>

@@ -1,15 +1,15 @@
-import {
-  CAPTURE_METHODS,
-  type CaptureMethod,
-  PREFERENCE_DEFAULTS,
-  normalizeTerm,
-  parseContext,
-} from "@better-vocab/domain";
 import { db } from "@better-vocab/db";
 import { book, folder, type TopicWordGroup } from "@better-vocab/db/schema/book";
 import { dictionaryEntry } from "@better-vocab/db/schema/dictionary";
 import { userPreference } from "@better-vocab/db/schema/preference";
 import { word } from "@better-vocab/db/schema/word";
+import {
+  CAPTURE_METHODS,
+  type CaptureMethod,
+  normalizeTerm,
+  PREFERENCE_DEFAULTS,
+  parseContext,
+} from "@better-vocab/domain";
 import { and, desc, eq, ilike, inArray, isNull, like, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -20,6 +20,7 @@ import { keepDictionaryWords } from "./dictionary";
 
 /** Where a word sits in the reader's rotation — the scheme's three states. */
 type Mastery = "new" | "learning" | "steady";
+
 import { assertOwned, ownedBy } from "../ownership";
 
 async function assertFolderOwnership(userId: string, folderId: string) {
@@ -144,7 +145,9 @@ async function topicWordsFor(row: typeof book.$inferSelect): Promise<TopicWordGr
   if (!claimed) return [];
 
   const suggested = await suggestTopicWords(row);
-  const known = suggested && (await keepDictionaryWords([...new Set(suggested.flatMap((entry) => entry.terms))]));
+  const known =
+    suggested &&
+    (await keepDictionaryWords([...new Set(suggested.flatMap((entry) => entry.terms))]));
   if (!suggested || !known) {
     await db.update(book).set({ topicWordsAt: null }).where(eq(book.id, row.id));
     return [];
@@ -184,13 +187,15 @@ type FlushResult =
   | { localId: string; status: "dropped"; reason: string };
 
 export const wordRouter = router({
-  listByFolder: protectedProcedure.input(z.object({ folderId: z.string() })).query(({ ctx, input }) =>
-    db.query.word.findMany({
-      where: and(eq(word.folderId, input.folderId), eq(word.userId, ctx.session.user.id)),
-      with: { dictionaryEntry: true },
-      orderBy: desc(word.createdAt),
-    }),
-  ),
+  listByFolder: protectedProcedure
+    .input(z.object({ folderId: z.string() }))
+    .query(({ ctx, input }) =>
+      db.query.word.findMany({
+        where: and(eq(word.folderId, input.folderId), eq(word.userId, ctx.session.user.id)),
+        with: { dictionaryEntry: true },
+        orderBy: desc(word.createdAt),
+      }),
+    ),
 
   // Server-side counterpart to the offline SQLite search — "search/filter
   // words across all folders" from the browsing-inventory flow.
@@ -234,7 +239,8 @@ export const wordRouter = router({
   createMany: protectedProcedure
     .input(
       z.object({
-        captures: z.array(captureSchema.extend({ localId: z.string().min(1) }))
+        captures: z
+          .array(captureSchema.extend({ localId: z.string().min(1) }))
           .min(1)
           .max(FLUSH_LIMIT),
       }),
@@ -342,7 +348,10 @@ export const wordRouter = router({
             // LIKE's own wildcards are escaped, so a typed "%" matches a "%".
             // normalized_term is lowercase, so the prefix is normalized too.
             input.prefix
-              ? like(word.normalizedTerm, `${normalizeTerm(input.prefix).replace(/[\\%_]/g, "\\$&")}%`)
+              ? like(
+                  word.normalizedTerm,
+                  `${normalizeTerm(input.prefix).replace(/[\\%_]/g, "\\$&")}%`,
+                )
               : undefined,
           ),
         )
@@ -378,12 +387,18 @@ export const wordRouter = router({
 
       const [topics, inFolder] = await Promise.all([
         topicWordsFor(row),
-        db.select({ term: word.normalizedTerm }).from(word).where(eq(word.folderId, input.folderId)),
+        db
+          .select({ term: word.normalizedTerm })
+          .from(word)
+          .where(eq(word.folderId, input.folderId)),
       ]);
       const saved = new Set(inFolder.map((entry) => entry.term));
 
       return topics
-        .map((entry) => ({ topic: entry.topic, terms: entry.terms.filter((term) => !saved.has(term)) }))
+        .map((entry) => ({
+          topic: entry.topic,
+          terms: entry.terms.filter((term) => !saved.has(term)),
+        }))
         .filter((entry) => entry.terms.length > 0);
     }),
 
@@ -562,11 +577,13 @@ export const wordRouter = router({
       return assertOwned(updated, "Word");
     }),
 
-  delete: protectedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
-    const [deleted] = await db
-      .delete(word)
-      .where(ownedBy(word, input.id, ctx.session.user.id))
-      .returning({ id: word.id });
-    return assertOwned(deleted, "Word");
-  }),
+  delete: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [deleted] = await db
+        .delete(word)
+        .where(ownedBy(word, input.id, ctx.session.user.id))
+        .returning({ id: word.id });
+      return assertOwned(deleted, "Word");
+    }),
 });

@@ -63,7 +63,7 @@ const CONTEXT_RULES = [
   "Invent every sentence. Never quote or paraphrase a book, and never reference a plot, character, or",
   "setting — readers log words mid-book and a borrowed sentence can spoil it.",
   "",
-  "usageNote: at most 15 words on register or frequency, e.g. \"Mostly literary; rare in speech.\"",
+  'usageNote: at most 15 words on register or frequency, e.g. "Mostly literary; rare in speech."',
   "Say something a learner could not read off the definition itself.",
 ];
 
@@ -226,8 +226,16 @@ function toEnrichment(object: z.infer<typeof enrichmentSchema>): Enrichment | nu
  * Enrichment is strictly an upgrade on top of a definition the caller already
  * has, so it must never turn a working lookup into a failed one.
  */
-export async function enrichDefinition(term: string, definition: string): Promise<Enrichment | null> {
-  const object = await generate(term, enrichmentSchema, ENRICH_PROMPT, `Word: ${term}\nDefinition: ${definition}`);
+export async function enrichDefinition(
+  term: string,
+  definition: string,
+): Promise<Enrichment | null> {
+  const object = await generate(
+    term,
+    enrichmentSchema,
+    ENRICH_PROMPT,
+    `Word: ${term}\nDefinition: ${definition}`,
+  );
   return object && toEnrichment(object);
 }
 
@@ -307,7 +315,11 @@ export async function suggestTopicWords(book: {
       topic: topic.trim(),
       // One plain word each: the Datamuse check and every term join match on
       // the normalized form, and a phrase would match neither.
-      terms: [...new Set(words.map((w) => normalizeTerm(w)).filter((w) => /^[a-z]+(?:-[a-z]+)?$/.test(w)))],
+      terms: [
+        ...new Set(
+          words.map((w) => normalizeTerm(w)).filter((w) => /^[a-z]+(?:-[a-z]+)?$/.test(w)),
+        ),
+      ],
     }))
     .filter((entry) => entry.topic && entry.terms.length > 0);
 

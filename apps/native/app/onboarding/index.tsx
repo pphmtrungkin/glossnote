@@ -181,7 +181,9 @@ export default function TourScreen() {
           <Text className="mb-3.5 font-serif-semibold text-[33px] leading-[36px] tracking-[-0.66px] text-foreground">
             {step.headline}
           </Text>
-          <Text className="font-serif max-w-[300px] text-[15.5px] leading-[25px] text-muted">{step.body}</Text>
+          <Text className="font-serif max-w-[300px] text-[15.5px] leading-[25px] text-muted">
+            {step.body}
+          </Text>
 
           <Figure />
         </View>

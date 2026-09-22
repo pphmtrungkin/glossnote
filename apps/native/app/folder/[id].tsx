@@ -33,7 +33,9 @@ export default function FolderScreen() {
   function invalidateWords() {
     // Deleting a word moves the shelf's word count too, so both refetch.
     return Promise.all([
-      queryClient.invalidateQueries({ queryKey: trpc.word.listByFolder.queryKey({ folderId: id }) }),
+      queryClient.invalidateQueries({
+        queryKey: trpc.word.listByFolder.queryKey({ folderId: id }),
+      }),
       queryClient.invalidateQueries({ queryKey: trpc.folder.list.queryKey() }),
     ]);
   }
@@ -62,7 +64,11 @@ export default function FolderScreen() {
           title: folder?.title ?? "Shelf",
           headerRight: () => (
             <Link href={{ pathname: "/add-word", params: { folderId: id } }} asChild>
-              <Pressable accessibilityRole="button" accessibilityLabel="Add word" className="px-2.5">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add word"
+                className="px-2.5"
+              >
                 <Ionicons name="add" size={24} color={foregroundColor} />
               </Pressable>
             </Link>
@@ -178,13 +184,18 @@ export default function FolderScreen() {
                 </View>
 
                 {definition ? (
-                  <Text className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted" numberOfLines={2}>
+                  <Text
+                    className="font-serif mt-1 text-[13.5px] leading-[20px] text-muted"
+                    numberOfLines={2}
+                  >
                     {definition}
                   </Text>
                 ) : (
                   // Not an error: word.create leaves dictionaryEntryId null
                   // when no definition was known at capture time.
-                  <Text className="font-serif mt-1 text-[12px] text-muted">Waiting on a definition.</Text>
+                  <Text className="font-serif mt-1 text-[12px] text-muted">
+                    Waiting on a definition.
+                  </Text>
                 )}
               </Pressable>
             </Link>

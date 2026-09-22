@@ -1,5 +1,4 @@
-import { dark, light, type Palette } from "@/nativewind/theme";
-
+export type { Mastery, Palette } from "@/nativewind/theme";
 /**
  * Ochre spot colour values for the places a className cannot reach — StatusBar,
  * react-native-svg fills, chart libraries, navigation themes, Animated.
@@ -13,9 +12,6 @@ import { dark, light, type Palette } from "@/nativewind/theme";
  * The values themselves live in `nativewind/theme.ts` and are re-exported here
  * rather than copied, so there is one spelling of ochre in the codebase.
  */
-export { dark, light, masteryColor, masteryTrack, communityColor, useThemeColors } from "@/nativewind/theme";
-export type { Palette, Mastery } from "@/nativewind/theme";
-
 /**
  * The palette matching the page the reader is on.
  *
@@ -23,4 +19,12 @@ export type { Palette, Mastery } from "@/nativewind/theme";
  * so it stays in sync with global.css automatically. Kept as a named export
  * for backward compatibility — new code should import `useThemeColors` directly.
  */
-export { useThemeColors as usePalette } from "@/nativewind/theme";
+export {
+  communityColor,
+  dark,
+  light,
+  masteryColor,
+  masteryTrack,
+  useThemeColors,
+  useThemeColors as usePalette,
+} from "@/nativewind/theme";

@@ -1,5 +1,6 @@
 import { useSQLiteContext } from "expo-sqlite";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type React from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Uniwind, useUniwind } from "uniwind";
 
 import { getAppSetting, setAppSetting } from "@/lib/app-settings";

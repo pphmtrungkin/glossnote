@@ -32,7 +32,9 @@ import { dictionarySourceEnum } from "./enums";
 export const dictionaryEntry = pgTable(
   "dictionary_entry",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     term: text("term").notNull(),
     // The definition readers see. A term resolved AI-first has it written by
     // the model, inserted already enriched (`source` "ai_enhanced"); a row

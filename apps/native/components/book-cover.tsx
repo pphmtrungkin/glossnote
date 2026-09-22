@@ -31,7 +31,12 @@ export function BookCover({
   const source = uri.includes("covers.openlibrary.org") ? uri.replace(/-M\.jpg/, "-L.jpg") : uri;
 
   return (
-    <Image source={{ uri: source }} className={className} resizeMode="cover" onError={() => setFailedUri(uri)} />
+    <Image
+      source={{ uri: source }}
+      className={className}
+      resizeMode="cover"
+      onError={() => setFailedUri(uri)}
+    />
   );
 }
 
@@ -60,13 +65,18 @@ export function CoverTile({
 }) {
   const fallback = compact ? (
     <View className="flex-1 items-center justify-center">
-      <Text className="font-serif-semibold text-[18px] text-muted">{title.trim().charAt(0).toUpperCase()}</Text>
+      <Text className="font-serif-semibold text-[18px] text-muted">
+        {title.trim().charAt(0).toUpperCase()}
+      </Text>
     </View>
   ) : (
     // The padding lives on the fallback, not the tile: padding on the tile
     // shrank the cover image with it, leaving a gap on its right and bottom.
     <View className="flex-1 justify-end p-1.5">
-      <Text className="font-serif-semibold text-[11px] leading-[13px] text-foreground" numberOfLines={6}>
+      <Text
+        className="font-serif-semibold text-[11px] leading-[13px] text-foreground"
+        numberOfLines={6}
+      >
         {title}
       </Text>
     </View>

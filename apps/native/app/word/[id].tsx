@@ -49,6 +49,7 @@ export default function WordScreen() {
   const [note, setNote] = useState("");
   // Seeded once the row arrives, and again if the reader navigates to another
   // word without the screen unmounting.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: personalNote is deliberately a dep, not just word.id — see the comment above.
   useEffect(() => setNote(word?.personalNote ?? ""), [word?.id, word?.personalNote]);
 
   const updateWord = useMutation(
@@ -111,7 +112,9 @@ export default function WordScreen() {
       {/* ---- What it means -------------------------------------------------- */}
       <View className="mt-6 border-t-2 border-foreground pt-4">
         {definition ? (
-          <Text className="font-serif text-[17px] leading-[26px] text-foreground">{definition}</Text>
+          <Text className="font-serif text-[17px] leading-[26px] text-foreground">
+            {definition}
+          </Text>
         ) : (
           <Text className="font-serif text-[14px] text-muted">
             No definition resolved yet. It fills in the next time this word is looked up online.

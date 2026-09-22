@@ -10,7 +10,9 @@ export type TopicWordGroup = { topic: string; terms: string[] };
 export const book = pgTable(
   "book",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     // Free text, not an enum. `hardcover` is the only value written today (by
     // book.search, and by the seed), but a Postgres enum would need a
     // migration every time another source — Google Books, Open Library, manual
@@ -44,7 +46,9 @@ export const book = pgTable(
 export const folder = pgTable(
   "folder",
   {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

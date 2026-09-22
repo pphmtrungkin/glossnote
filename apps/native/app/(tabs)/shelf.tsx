@@ -22,15 +22,15 @@ import z from "zod";
 
 import { BookCover, CoverTile } from "@/components/book-cover";
 import { Container } from "@/components/container";
-import { Notice } from "@/components/notice";
 import { IsbnScanner } from "@/components/isbn-scanner";
+import { Notice } from "@/components/notice";
 import { TextField } from "@/components/text-field";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFolders } from "@/hooks/use-folders";
 import {
-  FOLDER_STATUSES,
   FOLDER_STATUS_COLORS,
   FOLDER_STATUS_LABELS,
+  FOLDER_STATUSES,
   type FolderStatus,
 } from "@/lib/folder-status";
 import { getFormErrorMessage } from "@/lib/form-error";
@@ -45,7 +45,8 @@ type BookHit = inferRouterOutputs<AppRouter>["book"]["search"][number];
 const VISIBILITY_COPY: Record<FolderVisibility, { label: string; description: string }> = {
   private: {
     label: "Private",
-    description: "Only you. Words you save here don't count toward what other readers of this book see.",
+    description:
+      "Only you. Words you save here don't count toward what other readers of this book see.",
   },
   public: {
     label: "Public",
@@ -85,11 +86,7 @@ type AddMode = (typeof ADD_MODES)[number]["id"];
  * HeroUI ships for that; outside a sheet it returns no-ops, so this stays a
  * plain TextField everywhere else.
  */
-function SheetTextField({
-  onFocus,
-  onBlur,
-  ...props
-}: ComponentProps<typeof TextField>) {
+function SheetTextField({ onFocus, onBlur, ...props }: ComponentProps<typeof TextField>) {
   const sheet = useBottomSheetAwareHandlers();
 
   return (
@@ -345,36 +342,20 @@ export default function ShelfScreen() {
                   className="w-14 h-[84px] rounded"
                   fallback={
                     <View className="w-14 h-[84px] rounded items-center justify-center bg-surface-2">
-                      <Ionicons
-                        name="book-outline"
-                        size={18}
-                        color={mutedColor}
-                      />
+                      <Ionicons name="book-outline" size={18} color={mutedColor} />
                     </View>
                   }
                 />
                 <View className="flex-1">
-                  <Text
-                    className="text-foreground text-sm font-serif-medium"
-                    numberOfLines={1}
-                  >
+                  <Text className="text-foreground text-sm font-serif-medium" numberOfLines={1}>
                     {pickedBook.title}
                   </Text>
-                  <Text
-                    className="font-serif text-muted text-xs"
-                    numberOfLines={1}
-                  >
+                  <Text className="font-serif text-muted text-xs" numberOfLines={1}>
                     {pickedBook.authors.join(", ") || "Unknown author"}
                   </Text>
                 </View>
-                <Button
-                  size="sm"
-                  variant="tertiary"
-                  onPress={() => setPickedBook(null)}
-                >
-                  <Button.Label className="font-serif-medium">
-                    Change
-                  </Button.Label>
+                <Button size="sm" variant="tertiary" onPress={() => setPickedBook(null)}>
+                  <Button.Label className="font-serif-medium">Change</Button.Label>
                 </Button>
               </Surface>
             ) : addMode === "search" ? (
@@ -421,41 +402,32 @@ export default function ShelfScreen() {
                       className="w-[34px] h-[50px] rounded"
                       fallback={
                         <View className="w-[34px] h-[50px] rounded items-center justify-center bg-surface-2">
-                          <Ionicons
-                            name="book-outline"
-                            size={12}
-                            color={mutedColor}
-                          />
+                          <Ionicons name="book-outline" size={12} color={mutedColor} />
                         </View>
                       }
                     />
                     <View className="flex-1">
-                      <Text
-                        className="font-serif text-foreground text-sm"
-                        numberOfLines={1}
-                      >
+                      <Text className="font-serif text-foreground text-sm" numberOfLines={1}>
                         {hit.title}
                       </Text>
-                      <Text
-                        className="font-serif text-muted text-xs"
-                        numberOfLines={1}
-                      >
-                        {[hit.authors.join(", "), hit.releaseYear]
-                          .filter(Boolean)
-                          .join(" · ")}
+                      <Text className="font-serif text-muted text-xs" numberOfLines={1}>
+                        {[hit.authors.join(", "), hit.releaseYear].filter(Boolean).join(" · ")}
                       </Text>
                     </View>
                   </Pressable>
                 ))}
 
-                {isSearchingBooks && !bookResults.isFetching && bookHits.length === 0 && bookPage === 1 && (
-                  <View className="mt-2">
-                    <Notice
-                      title="Nothing matched that"
-                      body="Try the author's name, or put it on the shelf yourself — a typed title works the same."
-                    />
-                  </View>
-                )}
+                {isSearchingBooks &&
+                  !bookResults.isFetching &&
+                  bookHits.length === 0 &&
+                  bookPage === 1 && (
+                    <View className="mt-2">
+                      <Notice
+                        title="Nothing matched that"
+                        body="Try the author's name, or put it on the shelf yourself — a typed title works the same."
+                      />
+                    </View>
+                  )}
 
                 {/* Paging. A short page is the last one — Hardcover's total
                     never reaches the client, and inferring it from the page
@@ -627,20 +599,14 @@ export default function ShelfScreen() {
                     {(field) => (
                       <View>
                         {/* A plain label, styled like TextField's, for a row of chips. */}
-                        <Text className="font-serif text-[13px] text-muted">
-                          Status
-                        </Text>
+                        <Text className="font-serif text-[13px] text-muted">Status</Text>
                         <View className="flex-row gap-2 mt-2">
                           {FOLDER_STATUSES.map((status) => (
                             <Chip
                               key={status}
                               size="sm"
                               color={FOLDER_STATUS_COLORS[status]}
-                              variant={
-                                field.state.value === status
-                                  ? "primary"
-                                  : "secondary"
-                              }
+                              variant={field.state.value === status ? "primary" : "secondary"}
                               onPress={() => field.handleChange(status)}
                             >
                               <Chip.Label className="font-serif-medium">
@@ -664,9 +630,7 @@ export default function ShelfScreen() {
                     {isSubmitting ? (
                       <Spinner size="sm" color="default" />
                     ) : (
-                      <Button.Label className="font-serif-medium">
-                        Put it on the shelf
-                      </Button.Label>
+                      <Button.Label className="font-serif-medium">Put it on the shelf</Button.Label>
                     )}
                   </Button>
                 </View>
@@ -723,8 +687,12 @@ export default function ShelfScreen() {
             {sheetFolder ? (
               <View className="gap-3 pb-4">
                 <View className="mb-1">
-                  <BottomSheet.Title className="font-serif-semibold">{sheetFolder.title}</BottomSheet.Title>
-                  <BottomSheet.Description className="font-serif">Who this shelf&apos;s words reach.</BottomSheet.Description>
+                  <BottomSheet.Title className="font-serif-semibold">
+                    {sheetFolder.title}
+                  </BottomSheet.Title>
+                  <BottomSheet.Description className="font-serif">
+                    Who this shelf&apos;s words reach.
+                  </BottomSheet.Description>
                 </View>
 
                 {FOLDER_VISIBILITIES.map((visibility) => {
@@ -771,7 +739,9 @@ export default function ShelfScreen() {
                         ? `Current page of ${sheetFolder.book.pages}`
                         : "Current page"
                     }
-                    value={pageDraft ?? (sheetFolder.currentPage ? String(sheetFolder.currentPage) : "")}
+                    value={
+                      pageDraft ?? (sheetFolder.currentPage ? String(sheetFolder.currentPage) : "")
+                    }
                     onChangeText={(text) => setPageDraft(text.replace(/[^0-9]/g, ""))}
                     placeholder="—"
                     keyboardType="number-pad"
@@ -783,7 +753,10 @@ export default function ShelfScreen() {
                     <Button
                       onPress={() => {
                         const page = Number.parseInt(pageDraft, 10);
-                        updateStatus.mutate({ id: sheetFolder.id, currentPage: page >= 1 ? page : null });
+                        updateStatus.mutate({
+                          id: sheetFolder.id,
+                          currentPage: page >= 1 ? page : null,
+                        });
                         setPageDraft(null);
                       }}
                       className="mt-2"
@@ -867,7 +840,9 @@ export default function ShelfScreen() {
                             if (!isActive) updateStatus.mutate({ id: folder.id, status });
                           }}
                         >
-                          <Chip.Label className="font-serif-medium">{FOLDER_STATUS_LABELS[status]}</Chip.Label>
+                          <Chip.Label className="font-serif-medium">
+                            {FOLDER_STATUS_LABELS[status]}
+                          </Chip.Label>
                         </Chip>
                       );
                     })}
