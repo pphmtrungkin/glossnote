@@ -57,6 +57,13 @@
         {
           "photosPermission": "Allow GlossNote to read a barcode from a photo you choose."
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow GlossNote to hear a word you say instead of spelling it.",
+          "speechRecognitionPermission": "Allow GlossNote to turn a word you say into text."
+        }
       ]
     ],
     "experiments": {

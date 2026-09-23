@@ -77,3 +77,15 @@ export function parseContext(raw: string): ParsedContext | null {
 export function isValidContext(raw: string): boolean {
   return parseContext(raw) !== null;
 }
+
+/**
+ * How much text one context-mode explanation will look at.
+ *
+ * Lives here because both sides enforce it and they must agree: the add-word
+ * screen counts down to it as the reader types, and `passage.explain` rejects
+ * anything past it. A reader is stuck on a sentence or two, not a chapter —
+ * and unlike a definition, which is written once per word and then shared by
+ * every reader forever, an explanation is answered for one reader alone, so an
+ * unbounded field is an unbounded bill.
+ */
+export const MAX_PASSAGE_LENGTH = 600;

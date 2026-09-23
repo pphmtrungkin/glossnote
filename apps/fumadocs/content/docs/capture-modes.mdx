@@ -1,0 +1,142 @@
+---
+title: Capture modes
+description: Word mode saves a word; context mode explains a sentence — one screen, two questions, and only one of them ends in a row
+---
+
+A reader stops on a page for one of two reasons, and they are not the same question.
+
+**"I don't know this word."** That is what the app was built for: look it up, save it, meet it again in a quiz, and see how many other readers of the same book stopped on it too.
+
+**"I know every word here and still can't read this sentence."** Take this, from *Poor Charlie's Almanack*:
+
+> Envy, of course, joins chemicals in winning some sort of quantity prize for causing misery. It was wreaking havoc long before it got bad press in the laws of Moses.
+
+There is not one hard word in it. *Envy, chemicals, quantity, prize, havoc, press, Moses* — every one is in the bundled `core` dictionary. A vocabulary app is blind to this sentence: nothing to capture, nothing for Datamuse to gate, nothing for the crowd to have saved. And yet the passage is opaque until you hold the tenth commandment, hear the prize-giving as ironic, and notice that "bad press" is a newspaper word dropped onto scripture.
+
+`add-word` therefore has two modes. The reader picks after they have looked at the page, because that is when they know which question they are asking.
+
+## The two modes are deliberately asymmetric
+
+| | Word mode | Context mode |
+|---|---|---|
+| Question | "What does this word mean?" | "What is this sentence saying?" |
+| Ends in | A `word` row | An answer |
+| Stored | Postgres, shared aggregate, quiz deck | This device only |
+| Cost | One AI call per unique word, ever | One call per passage, per reader |
+| Action | **Save word** | **Explain** |
+
+That asymmetry is real and the UI does not hide it. There is no Save button in context mode that quietly does nothing — one mode saves, the other answers, and they are labelled for what they do.
+
+## Context mode stores nothing on the server
+
+`passage.explain` is the only AI procedure in the codebase that writes no row. Three reasons, and each is enough on its own.
+
+**The passage is the book's text, not the app's.** Keeping copies on a shared server, keyed so two readers of the same book hit the same row, would be a far larger version of the image-rights question already open against Hardcover's covers — see [DMCA](/docs/dmca).
+
+**A shared answer is permanent.** Every other AI answer here is keyed by term on a row every reader sees, and [the first answer is kept forever](/docs/ai-enrichment#one-ai-call-per-word-for-all-users). That is what makes one call per unique word hold — and it is also what makes a wrong answer permanent. An explanation nobody shares can be wrong once instead of wrong for good.
+
+**A passage has no key.** `dictionary_entry` works because a term is a natural key. A sentence is not.
+
+So the reader's own device keeps it, in `passage_note` (`user_version` 5), alongside the dictionary tiers and the offline capture queue:
+
+```sql
+CREATE TABLE passage_note (
+  hash       TEXT PRIMARY KEY,  -- FNV-1a of the passage, whitespace collapsed
+  passage    TEXT NOT NULL,
+  folder_id  TEXT,              -- nullable: a passage needs no shelf
+  plain      TEXT NOT NULL,
+  notes      TEXT NOT NULL,     -- the {phrase, gloss} list, as JSON
+  created_at INTEGER NOT NULL
+);
+```
+
+Reopening a past explanation costs no call and works offline, because `useExplainPassage` reads the device before it reaches the server. Reads and writes go through `lib/passage.ts`; screens never touch the table, the same rule `lib/dictionary.ts` holds.
+
+<Callout type="warn">
+`LOCAL_DB_VERSION` had drifted behind the migrations — it read `3` while `migrateLocalDb` produced `4`, so the early return fired on a device already at 3 and that device never received `pending_sync.page`. Fixed alongside this table. Keep the constant equal to the last version the function produces.
+</Callout>
+
+## The answer comes in two parts
+
+Because the difficulty comes in two kinds.
+
+`plain` is the passage said straight, for a reader who has lost the thread entirely. `notes` picks out the short phrases that carried the trouble, for a reader who followed the sentence but felt something go past them. Munger's line needs the second, not the first: it parses perfectly and means nothing without the allusion.
+
+From a live call:
+
+```json
+{
+  "plain": "Envy is a powerful emotion that causes a great deal of suffering, and it has
+            been recognized as a destructive force for a very long time, even before it
+            was mentioned in religious texts.",
+  "notes": [
+    { "phrase": "joins chemicals",
+      "gloss": "Compares envy to chemical reactions, suggesting both are fundamental and potent causes of negative outcomes." },
+    { "phrase": "winning some sort of quantity prize",
+      "gloss": "An ironic way of saying envy is a major contributor to misery, like a winner in a competition for causing suffering." },
+    { "phrase": "the laws of Moses",
+      "gloss": "Refers to the Ten Commandments, specifically the commandment against envy, indicating envy's long-standing recognition as a sin." }
+  ]
+}
+```
+
+### An echo is the model saying "nothing here"
+
+Asking for an empty `plain` when a passage needs no explaining **does not work**. Measured on `google/gemini-2.5-flash-lite`: "The cat sat on the mat and went to sleep." comes back with the same sentence as its own paraphrase however the instruction is worded, because the field's main instruction pulls the other way.
+
+So the gate is in code, not in the prompt:
+
+```ts
+// packages/api/src/enrich.ts
+const isEcho = notes.length === 0 && flatten(plain) === flatten(passage);
+return { plain: isEcho ? "" : plain, notes };
+```
+
+This is the same stance taken twice already in this codebase — the entry schema carries no `known: boolean` because a cheap model gets a boolean backwards, and [Datamuse rather than the model decides whether a word is real](/docs/api-layer#datamuse-decides-whether-it-is-a-word). Do not move this decision back into the prompt.
+
+## The spoiler guard is softer here, and that is a choice
+
+For words, the guard is hard: Datamuse decides whether a word exists, so a word invented for one book is never sent to the model at all. **There is no equivalent gate for prose.** A passage is handed to the model and only the prompt stands between it and "this foreshadows his death".
+
+The prompt is explicit about it:
+
+> Explain only what is on the page in front of you. Never say what the passage foreshadows, never draw on what happens later in the book, and never mention a character, event or ending the passage does not itself name. Identifying an allusion to something outside the book — scripture, myth, history, another author — is exactly the job and is not a spoiler.
+
+Only the **title and author** reach the model, so it can place a register. The book's description is deliberately withheld: it carries plot, and plot is the thing that must not get ahead of the reader.
+
+Tested live against three books whose endings are widely known — *The Great Gatsby*'s last line, *Dune*'s Litany Against Fear, the opening of *Nineteen Eighty-Four*. None of the three answers named a death, an ending, or a character the passage did not itself name; the 1984 answer explained the thirteenth stroke as a signal that something is wrong without naming the state or its ruler.
+
+<Callout type="warn">
+Three passages is a sample, not a proof. Test a replacement model the same way this one was chosen — with live calls on books that have something to spoil, not just on prose that reads well.
+</Callout>
+
+## Cost, and why this one is rate-limited harder
+
+Every other AI answer in the app is amortized: one unique word costs one call across the entire user base, forever, and a busy book warms the cache for everyone who reads it later. **Context mode is the one place that is not true.** An explanation is answered for one reader and kept by one device, so cost scales with use rather than with the vocabulary.
+
+Two guards follow:
+
+- `MAX_PASSAGE_LENGTH` (600 characters) lives in `@better-vocab/domain`, because both sides enforce it and they must agree — the field counts down to it, and `passage.explain` rejects anything past it. A reader is stuck on a sentence or two, not a chapter.
+- `passage.explain` allows **10 calls a minute** per user, against `dictionary.lookup`'s 60. That one is mostly answered from a cached row; every call here reaches the model.
+
+The device cache does the rest: a passage asked about twice is answered once.
+
+## Saying a word instead of spelling it
+
+Today's **Say it** tile opens `add-word` with `listen=1`, which starts the microphone on arrival. It fills the Word field and stops there — the reader still sees the definition resolve and still presses Save. Voice is an input method for the one form, not a second capture path, so it inherits the offline queue and the invalidations that go with a save.
+
+`captureMethod` becomes `voice` only while the field still holds what was heard; editing it makes the capture `manual`, the same rule the definition already follows. `CAPTURE_METHODS` already contained `voice`, so no migration was needed.
+
+### Rare words are exactly what recognisers are worst at
+
+Which is the whole difficulty: this app exists for the rarest words in a book. Two things push back.
+
+**Alternatives, re-ranked against the device dictionary.** The recogniser is asked for five and ranks them by how likely the sounds are; `knownTerms` re-ranks by which guesses are real words, which the recogniser has no idea about. Three spellings per alternative are tried — the transcript whole, with its spaces closed up, and each word alone — because a long unfamiliar word comes back split ("per spicacious").
+
+**`contextualStrings`, from other readers of this book.** Filled with `word.suggestions` plus `book.topicWords`, both already loaded for the form's recommendations, so it costs no extra query. Those are mostly the names and invented words no recogniser would reach on its own, and they are exactly what gets said aloud.
+
+A guess that matches no dictionary word is still returned rather than discarded. A word invented for the book is a first-class capture here — the form already says so — and snapping to the nearest real word would quietly destroy them.
+
+<Callout type="warn">
+`expo-speech-recognition` resolves its native module at import and **throws** when it is missing, which is every run in Expo Go. `use-dictation.ts` loads it inside a `try`/`catch` and falls back to a no-op listener, so the screen still works with a keyboard where the module is absent. Saying a word needs a development build — `expo run:ios` or `run:android`, which the camera already required.
+</Callout>

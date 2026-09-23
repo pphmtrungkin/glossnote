@@ -27,6 +27,7 @@ import {
   DICTIONARY_SOURCES,
   FOLDER_STATUSES,
   FOLDER_VISIBILITIES,
+  MAX_PASSAGE_LENGTH,
   normalizeTerm,
   OFFLINE_DICTIONARY_TIERS,
   PREFERENCE_DEFAULTS,
@@ -1184,6 +1185,45 @@ assert.equal(
 // exercising the insert path.
 await db.delete(dictionaryEntry).where(eq(dictionaryEntry.term, "petrichor"));
 ok("folder.delete cascades to words, leaving the seed intact");
+
+// ---- context mode --------------------------------------------------------
+// `passage.explain` is the one AI call here whose answer is neither shared nor
+// stored, so there is no row to assert against — what can be checked without
+// spending a call is the guard in front of it and the failure shape behind it.
+await rejectsWith(
+  () =>
+    api.passage.explain({
+      passage: "x".repeat(MAX_PASSAGE_LENGTH + 1),
+      folderId: myFolder.id,
+    }),
+  /too_big|at most|600/i,
+  "a passage past the shared cap is refused before any call is made",
+);
+ok("passage.explain caps the passage length both sides agree on");
+
+if (env.AI_GATEWAY_API_KEY) {
+  ok("passage.explain skipped: AI_GATEWAY_API_KEY is set and db:smoke makes no external calls");
+} else {
+  // The unconfigured path is also the failure path: no key, a gateway that is
+  // down and a refusal all reach the reader as the same "unavailable", never
+  // as an empty explanation that reads like a bad answer.
+  await rejectsWith(
+    () => api.passage.explain({ passage: "A plain sentence.", folderId: myFolder.id }),
+    /PRECONDITION_FAILED|unavailable/i,
+    "an unconfigured explainer says it is off rather than returning an empty answer",
+  );
+  ok("passage.explain reports being unavailable rather than answering emptily");
+
+  // A folder id is a guessable handle, so it is scoped like every other read
+  // of a user's row. Another user's shelf simply yields no book rather than an
+  // error — the explanation never depended on it.
+  await rejectsWith(
+    () => api.passage.explain({ passage: "A plain sentence.", folderId: otherFolder.id }),
+    /PRECONDITION_FAILED|unavailable/i,
+    "another user's folder is ignored, not read, and not an error of its own",
+  );
+  ok("passage.explain does not read a folder belonging to someone else");
+}
 
 console.log(pass.map((p) => `  ✓ ${p}`).join("\n"));
 console.log(`\n${pass.length} checks passed`);

@@ -66,9 +66,9 @@ const BOOK_PAGE_SIZE = 5;
 /**
  * The design canvas's Search / Enter by hand / Scan segments.
  *
- * Scan is drawn in the canvas as a live camera reading an ISBN barcode. There
- * is no camera behind it here, so it renders disabled — the same rule Today
- * applies to Scan page and Say it.
+ * Scan is drawn in the canvas as a live camera reading an ISBN barcode, and
+ * that is what it does: components/isbn-scanner.tsx reads an EAN-13 and the
+ * sheet resolves it through `book.byIsbn`. All three segments are live.
  */
 const ADD_MODES = [
   { id: "search", label: "Search", isDisabled: false },

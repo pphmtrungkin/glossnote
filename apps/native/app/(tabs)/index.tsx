@@ -20,9 +20,12 @@ import { trpc } from "@/utils/trpc";
  * Where it departs from the canvas, on purpose:
  *   - The tab's navigation header is hidden ((tabs)/_layout.tsx): the wordmark
  *     and date are the page's own first row, as drawn.
- *   - The accent button is "Type it", not "Scan page". Scan and Say it have
- *     nothing behind them and render disabled, and the one accent goes to the
- *     single real action (the colour rule in CLAUDE.md).
+ *   - The accent button is "Type it", not "Scan page". Say it opens the same
+ *     add-word screen with the microphone running (`listen=1`) rather than
+ *     capturing on its own, so there is still one capture path; Scan page has
+ *     no OCR behind it yet and renders disabled. The one accent goes to the
+ *     single main action (the colour rule in CLAUDE.md), which is why Say it
+ *     is an outline tile beside it rather than a second accent.
  *   - No streak line — nothing records one, so it is left out rather than
  *     invented. The progress bar is real: a saved word's page moves it.
  *   - The Offline marker is `danger`, not the canvas's second accent, which
@@ -235,8 +238,16 @@ export default function HomeScreen() {
         </Pressable>
 
         <Pressable
-          disabled
-          className="min-h-[76px] flex-1 items-center gap-2 rounded-[2px] border border-surface-strong px-1 py-4 opacity-40"
+          onPress={() =>
+            router.push(
+              current
+                ? { pathname: "/add-word", params: { folderId: current.id, listen: "1" } }
+                : "/shelf",
+            )
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Say a word to save"
+          className="min-h-[76px] flex-1 items-center gap-2 rounded-[2px] border border-surface-strong px-1 py-4 active:opacity-60"
         >
           <CaptureIcon kind="say" color={palette.ink} />
           <Text className="font-serif-semibold text-[12px] text-foreground">Say it</Text>

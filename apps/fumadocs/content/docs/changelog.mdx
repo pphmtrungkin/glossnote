@@ -11,6 +11,26 @@ Anything marked **Breaking** changes behaviour that an existing caller depends o
 
 ## Unreleased
 
+### Context mode: explain a passage, not just a word
+
+`add-word` has two modes. Word mode is what it always was. **Context mode** takes a sentence the reader is stuck on and explains it — the metaphor, the allusion, the joke whose register is easy to miss — for the case where every word is familiar and the sentence still will not open. See [Capture modes](/docs/capture-modes).
+
+`passage.explain` is the only AI procedure here that **writes no row**. The passage is the book's text rather than the app's, a shared answer would be permanent the way every enrichment is, and a sentence has no natural key the way a term does. Explanations are kept on the reader's own device in `passage_note` (`user_version` 5), so reopening one costs no call and works offline.
+
+This is also the one AI call whose cost is not amortized across readers, so it is capped at 600 characters (`MAX_PASSAGE_LENGTH`, in `@better-vocab/domain` because both sides enforce it) and rate-limited to 10 calls a minute against `dictionary.lookup`'s 60.
+
+**The spoiler guard is softer here**, deliberately. Datamuse cannot gate prose, so only the prompt and a title-and-author-only context stand between the model and the ending. Verified live against *Gatsby*, *Dune* and *Nineteen Eighty-Four*; test a replacement model the same way.
+
+**Breaking-ish:** `LOCAL_DB_VERSION` had drifted to `3` while `migrateLocalDb` produced `4`, so a device already at 3 returned early and never received `pending_sync.page`. Fixed with this migration.
+
+### Say a word instead of spelling it
+
+Today's **Say it** tile is live. It opens `add-word` with the microphone running; what it hears fills the Word field and nothing more, so the reader still sees the definition and still presses Save. Voice is an input method for the one capture path, not a second one. `CAPTURE_METHODS` already held `voice`, so no migration was needed.
+
+Recognisers are worst at exactly the words this app exists for, so the top transcript is not trusted: five alternatives are re-ranked against the device dictionary across three spellings each, and `contextualStrings` is seeded from other readers' saved words for the book. A guess matching no dictionary word is still offered — a word invented for the book is a first-class capture.
+
+Needs a development build: `expo-speech-recognition` throws at import in Expo Go, so the module is loaded defensively and typing still works where it is absent.
+
 ### Scan a barcode to add a book
 
 The Scan segment of the add-a-book sheet is real. `expo-camera` reads the EAN-13 on the back of a book, `book.byIsbn` resolves it, and the match panel confirms the edition before it reaches the shelf.

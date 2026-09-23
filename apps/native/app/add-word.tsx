@@ -10,6 +10,8 @@ import { Pressable, Text, View } from "react-native";
 import z from "zod";
 
 import { Container } from "@/components/container";
+import { Dictation } from "@/components/dictation";
+import { PassageExplainer } from "@/components/passage-explainer";
 import { TextField } from "@/components/text-field";
 import { WordUsage } from "@/components/word-usage";
 import { useCaptureWord } from "@/hooks/use-capture-word";
@@ -24,6 +26,26 @@ const addWordSchema = z.object({
   term: z.string().trim().min(1, "Enter the word you looked up"),
 });
 
+/**
+ * The two ways a reader is stuck, which are not the same question.
+ *
+ * Word mode is "I don't know this word" and ends in a save — a `word` row with
+ * a folder, a page, a place in the aggregate and a card in the quiz deck.
+ * Context mode is "I know every word and still can't read this sentence" and
+ * ends in an answer, kept on the device and nowhere else.
+ *
+ * They share a screen because the reader does not know which one they need
+ * until they have looked at the page, but they are deliberately not made to
+ * look alike: the asymmetry between saving and asking is real, and hiding it
+ * behind a matching pair of buttons would only mislead.
+ */
+const CAPTURE_MODES = [
+  { id: "word", label: "Word" },
+  { id: "context", label: "Context" },
+] as const;
+
+type CaptureMode = (typeof CAPTURE_MODES)[number]["id"];
+
 /** Section label — the same small tracked kicker the rest of the app uses. */
 function Kicker({ children }: { children: string }) {
   return (
@@ -34,7 +56,17 @@ function Kicker({ children }: { children: string }) {
 }
 
 export default function AddWordScreen() {
-  const { folderId } = useLocalSearchParams<{ folderId: string }>();
+  // `listen` arrives from Today's Say it tile, which opens this screen with
+  // the microphone already running rather than saving a word of its own.
+  const {
+    folderId,
+    listen,
+    mode: initialMode,
+  } = useLocalSearchParams<{
+    folderId: string;
+    listen?: string;
+    mode?: CaptureMode;
+  }>();
   const { toast } = useToast();
   const foregroundColor = useThemeColor("foreground");
 
@@ -62,6 +94,16 @@ export default function AddWordScreen() {
   const latestPage = useRef<number | undefined>(undefined);
   latestPage.current = parsedPage >= 1 ? parsedPage : undefined;
 
+  // Arriving from Say it means a spoken word, so it opens on word mode. The
+  // param is here for the entry points that already know which question is
+  // being asked — a sentence selected off a scanned page will be one.
+  const [mode, setMode] = useState<CaptureMode>(initialMode === "context" ? "context" : "word");
+
+  // The last word the microphone put in the field, so onSubmit can tell a
+  // spoken capture from a typed one. A ref, like latestPage: it is read at
+  // submit time and no part of the screen renders differently for it.
+  const spokenTerm = useRef<string | null>(null);
+
   const form = useForm({
     defaultValues: { term: "" },
     validators: { onSubmit: addWordSchema },
@@ -80,7 +122,13 @@ export default function AddWordScreen() {
         // debounced copy of the field, so a quick Save after an edit would
         // otherwise file the previous word's definition.
         definition: shown && shown.term === normalizeTerm(term) ? shown.definition : undefined,
-        captureMethod: "manual",
+        // "voice" only while the field still holds what the microphone heard:
+        // a reader who corrects the word typed it, whatever put it there
+        // first. Same rule as the definition above, for the same reason.
+        captureMethod:
+          spokenTerm.current && normalizeTerm(spokenTerm.current) === normalizeTerm(term)
+            ? "voice"
+            : "manual",
         page: latestPage.current,
       });
 
@@ -147,6 +195,15 @@ export default function AddWordScreen() {
     queryFn: () => completeTerm(db, normalizeTerm(prefix), 6),
     enabled: prefix.length >= 2,
   });
+  // What to bias the recogniser towards: the rare words a reader of *this*
+  // book is likely to say out loud. Both lists are already loaded for the
+  // recommendations below, so this costs no extra query — and they are exactly
+  // the names and invented words a speech model would never reach on its own.
+  const contextualStrings = [
+    ...(readers.data ?? []).map((match) => match.term),
+    ...(topics.data ?? []).flatMap((group) => group.terms),
+  ];
+
   const readerTerms = new Set(readerWords.map((match) => match.normalizedTerm));
   const dictionaryWords =
     typed.length >= 2
@@ -176,87 +233,107 @@ export default function AddWordScreen() {
       />
 
       <View className="gap-3 pt-4">
-        <View className="flex-row items-start gap-3">
-          <View className="flex-1">
-            <form.Field name="term">
-              {(field) => (
-                <TextField
-                  label="Word"
-                  error={getFormErrorMessage(field.state.meta.errors)}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChangeText={field.handleChange}
-                  placeholder="perspicacious"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoFocus
-                  returnKeyType="done"
-                />
-              )}
-            </form.Field>
-          </View>
-          <View className="w-[88px]">
-            <TextField
-              label="Page"
-              value={shownPage}
-              onChangeText={(text) => setPageText(text.replace(/[^0-9]/g, ""))}
-              placeholder="—"
-              keyboardType="number-pad"
-              maxLength={5}
-            />
-          </View>
-        </View>
-
-        {readerWords.length > 0 ? (
-          <View>
-            {/* Other readers' data stays muted grey by rule. */}
-            <Kicker>Readers of this book saved</Kicker>
-            {readerWords.map((match) => (
+        {/* Not `bg-primary` for the active segment, unlike the add-a-book
+            sheet: the one accent on this screen belongs to Save word /
+            Explain, directly below. A filled surface marks the choice. */}
+        <View className="flex-row overflow-hidden rounded-card border border-surface-strong">
+          {CAPTURE_MODES.map((option) => {
+            const isActive = mode === option.id;
+            return (
               <Pressable
-                key={match.normalizedTerm}
-                onPress={() => form.setFieldValue("term", match.term)}
-                accessibilityRole="button"
-                accessibilityLabel={`Use ${match.term}`}
-                className="flex-row items-baseline justify-between gap-3 border-b border-surface-strong py-2.5"
+                key={option.id}
+                onPress={() => setMode(option.id)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+                className={`min-h-[42px] flex-1 items-center justify-center ${
+                  isActive ? "bg-surface-strong" : ""
+                }`}
               >
-                <Text className="flex-1 font-serif-semibold text-[16px] text-foreground">
-                  {match.term}
-                </Text>
-                <Text className="font-serif text-[11px] text-muted">
-                  {match.readers === 1 ? "1 reader" : `${match.readers} readers`}
+                <Text
+                  className={`text-[13px] ${
+                    isActive ? "font-serif-semibold text-foreground" : "font-serif text-muted"
+                  }`}
+                >
+                  {option.label}
                 </Text>
               </Pressable>
-            ))}
-          </View>
-        ) : null}
+            );
+          })}
+        </View>
 
-        {dictionaryWords.length > 0 ? (
-          <View>
-            <Kicker>From the dictionary</Kicker>
-            <View className="mt-1.5 flex-row flex-wrap gap-2">
-              {dictionaryWords.map((word) => (
-                <Pressable
-                  key={word}
-                  onPress={() => form.setFieldValue("term", word)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Use ${word}`}
-                  className="rounded-card border border-surface-strong px-2.5 py-1.5"
-                >
-                  <Text className="font-serif text-[14px] text-foreground">{word}</Text>
-                </Pressable>
-              ))}
+        {mode === "context" ? (
+          <PassageExplainer folderId={folderId} />
+        ) : (
+          <>
+            <View className="flex-row items-start gap-3">
+              <View className="flex-1">
+                <form.Field name="term">
+                  {(field) => (
+                    <TextField
+                      label="Word"
+                      error={getFormErrorMessage(field.state.meta.errors)}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChangeText={field.handleChange}
+                      placeholder="perspicacious"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoFocus
+                      returnKeyType="done"
+                    />
+                  )}
+                </form.Field>
+              </View>
+              <View className="w-[88px]">
+                <TextField
+                  label="Page"
+                  value={shownPage}
+                  onChangeText={(text) => setPageText(text.replace(/[^0-9]/g, ""))}
+                  placeholder="—"
+                  keyboardType="number-pad"
+                  maxLength={5}
+                />
+              </View>
             </View>
-          </View>
-        ) : null}
 
-        {topicGroups.length > 0 ? (
-          <View className="gap-3 pt-1">
-            <Kicker>Suggested by AI for this book</Kicker>
-            {topicGroups.map((group) => (
-              <View key={group.topic}>
-                <Text className="font-serif text-[12.5px] text-muted">{group.topic}</Text>
+            {/* Speech fills the field above and nothing else — see components/dictation.tsx. */}
+            <Dictation
+              autoStart={listen === "1"}
+              contextualStrings={contextualStrings}
+              onTerm={(spoken) => {
+                spokenTerm.current = spoken;
+                form.setFieldValue("term", spoken);
+              }}
+            />
+
+            {readerWords.length > 0 ? (
+              <View>
+                {/* Other readers' data stays muted grey by rule. */}
+                <Kicker>Readers of this book saved</Kicker>
+                {readerWords.map((match) => (
+                  <Pressable
+                    key={match.normalizedTerm}
+                    onPress={() => form.setFieldValue("term", match.term)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Use ${match.term}`}
+                    className="flex-row items-baseline justify-between gap-3 border-b border-surface-strong py-2.5"
+                  >
+                    <Text className="flex-1 font-serif-semibold text-[16px] text-foreground">
+                      {match.term}
+                    </Text>
+                    <Text className="font-serif text-[11px] text-muted">
+                      {match.readers === 1 ? "1 reader" : `${match.readers} readers`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+
+            {dictionaryWords.length > 0 ? (
+              <View>
+                <Kicker>From the dictionary</Kicker>
                 <View className="mt-1.5 flex-row flex-wrap gap-2">
-                  {group.terms.map((word) => (
+                  {dictionaryWords.map((word) => (
                     <Pressable
                       key={word}
                       onPress={() => form.setFieldValue("term", word)}
@@ -269,60 +346,86 @@ export default function AddWordScreen() {
                   ))}
                 </View>
               </View>
-            ))}
-          </View>
-        ) : null}
+            ) : null}
 
-        {resolution.isFetching && !suggestion ? (
-          <View className="items-start py-2">
-            <Spinner size="sm" />
-          </View>
-        ) : suggestion ? (
-          <Surface variant="secondary" className="p-4 rounded-lg">
-            <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-foreground font-serif-semibold text-base">
-                {suggestion.term}
-              </Text>
-              {suggestion.partOfSpeech ? (
-                <Chip size="sm" variant="soft" color="default">
-                  <Chip.Label className="font-serif-medium">{suggestion.partOfSpeech}</Chip.Label>
-                </Chip>
-              ) : null}
-            </View>
-            <Text className="text-foreground text-[15px] font-serif leading-6">
-              {suggestion.definition}
-            </Text>
-            <Text className="font-serif text-muted text-xs mt-2">
-              {suggestion.fromNetwork ? "Found online." : "From your offline dictionary."}
-            </Text>
+            {topicGroups.length > 0 ? (
+              <View className="gap-3 pt-1">
+                <Kicker>Suggested by AI for this book</Kicker>
+                {topicGroups.map((group) => (
+                  <View key={group.topic}>
+                    <Text className="font-serif text-[12.5px] text-muted">{group.topic}</Text>
+                    <View className="mt-1.5 flex-row flex-wrap gap-2">
+                      {group.terms.map((word) => (
+                        <Pressable
+                          key={word}
+                          onPress={() => form.setFieldValue("term", word)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Use ${word}`}
+                          className="rounded-card border border-surface-strong px-2.5 py-1.5"
+                        >
+                          <Text className="font-serif text-[14px] text-foreground">{word}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
-            <WordUsage
-              contexts={suggestion.contexts}
-              exampleSentence={suggestion.exampleSentence}
-              usageNote={suggestion.usageNote}
-            />
-          </Surface>
-        ) : hasSearched ? (
-          <Surface variant="secondary" className="p-4 rounded-lg">
-            <Text className="font-serif text-muted text-sm">
-              {resolution.data?.status === "unreachable"
-                ? "No connection, and not in your offline dictionary. Save the word now — its definition fills in once it's looked up online."
-                : "Not in any dictionary — this may be a name or a word invented for the book. Save it anyway, and write what it means in your note on the word's page."}
-            </Text>
-          </Surface>
-        ) : null}
+            {resolution.isFetching && !suggestion ? (
+              <View className="items-start py-2">
+                <Spinner size="sm" />
+              </View>
+            ) : suggestion ? (
+              <Surface variant="secondary" className="p-4 rounded-lg">
+                <View className="flex-row items-center gap-2 mb-2">
+                  <Text className="text-foreground font-serif-semibold text-base">
+                    {suggestion.term}
+                  </Text>
+                  {suggestion.partOfSpeech ? (
+                    <Chip size="sm" variant="soft" color="default">
+                      <Chip.Label className="font-serif-medium">
+                        {suggestion.partOfSpeech}
+                      </Chip.Label>
+                    </Chip>
+                  ) : null}
+                </View>
+                <Text className="text-foreground text-[15px] font-serif leading-6">
+                  {suggestion.definition}
+                </Text>
+                <Text className="font-serif text-muted text-xs mt-2">
+                  {suggestion.fromNetwork ? "Found online." : "From your offline dictionary."}
+                </Text>
 
-        <form.Subscribe selector={(state) => state.isSubmitting}>
-          {(isSubmitting) => (
-            <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
-              {isSubmitting ? (
-                <Spinner size="sm" color="default" />
-              ) : (
-                <Button.Label className="font-serif-medium">Save word</Button.Label>
+                <WordUsage
+                  contexts={suggestion.contexts}
+                  exampleSentence={suggestion.exampleSentence}
+                  usageNote={suggestion.usageNote}
+                />
+              </Surface>
+            ) : hasSearched ? (
+              <Surface variant="secondary" className="p-4 rounded-lg">
+                <Text className="font-serif text-muted text-sm">
+                  {resolution.data?.status === "unreachable"
+                    ? "No connection, and not in your offline dictionary. Save the word now — its definition fills in once it's looked up online."
+                    : "Not in any dictionary — this may be a name or a word invented for the book. Save it anyway, and write what it means in your note on the word's page."}
+                </Text>
+              </Surface>
+            ) : null}
+
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button onPress={form.handleSubmit} isDisabled={isSubmitting} className="mt-1">
+                  {isSubmitting ? (
+                    <Spinner size="sm" color="default" />
+                  ) : (
+                    <Button.Label className="font-serif-medium">Save word</Button.Label>
+                  )}
+                </Button>
               )}
-            </Button>
-          )}
-        </form.Subscribe>
+            </form.Subscribe>
+          </>
+        )}
       </View>
     </Container>
   );

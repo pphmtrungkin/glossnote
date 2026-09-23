@@ -115,3 +115,30 @@ export async function cacheDefinition(
     entry.exampleSentence,
   );
 }
+
+/**
+ * Which of `candidates` this device actually holds a definition for.
+ *
+ * One statement rather than a lookup each: dictation offers several guesses at
+ * a word and they all have to be weighed before any of them reaches the field
+ * (see hooks/use-dictation.ts). Returns a Set because every caller is asking
+ * "is this one real?", never "what does it say?" — `readLocalDefinition` is
+ * still the way to the definition itself.
+ *
+ * Membership only, so tier and rank don't matter and neither does ordering:
+ * `DISTINCT term` over the same (term, source, rank) index the completion uses.
+ */
+export async function knownTerms(
+  db: SQLiteDatabase,
+  candidates: NormalizedTerm[],
+): Promise<Set<string>> {
+  if (candidates.length === 0) return new Set();
+
+  const rows = await db.getAllAsync<{ term: string }>(
+    `SELECT DISTINCT term
+       FROM dictionary
+      WHERE term IN (${candidates.map(() => "?").join(", ")})`,
+    ...candidates,
+  );
+  return new Set(rows.map((row) => row.term));
+}

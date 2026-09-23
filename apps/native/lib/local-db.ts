@@ -2,7 +2,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 
 export const LOCAL_DB_NAME = "glossnote.db";
 
-const LOCAL_DB_VERSION = 3;
+const LOCAL_DB_VERSION = 5;
 
 // Runs on every app start via SQLiteProvider's onInit. The dictionary tables
 // are declared IF NOT EXISTS only as a safety net for when no bundled asset
@@ -12,6 +12,10 @@ const LOCAL_DB_VERSION = 3;
 export async function migrateLocalDb(db: SQLiteDatabase) {
   const row = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
   let version = row?.user_version ?? 0;
+  // Keep LOCAL_DB_VERSION equal to the last version this function produces.
+  // It was left at 3 when the pending_sync.page migration was added, which
+  // made this return early on a device already at 3 — so that device never got
+  // the column and every offline capture on it failed to replay its page.
   if (version >= LOCAL_DB_VERSION) return;
 
   if (version === 0) {
@@ -123,6 +127,34 @@ export async function migrateLocalDb(db: SQLiteDatabase) {
     // The page a queued capture was met on, replayed to word.createMany.
     await db.execAsync(`ALTER TABLE pending_sync ADD COLUMN page INTEGER`);
     version = 4;
+  }
+
+  if (version === 4) {
+    // Context mode's explanations, kept per device and never on the server.
+    // The passage is the book's text rather than the app's, so it is not
+    // cached into a shared row the way a definition is — see
+    // packages/api/src/routers/passage.ts for why that line is drawn here.
+    //
+    // Keyed by a hash of the normalized passage rather than the passage
+    // itself: it is a lookup key, and a 600-character primary key would be
+    // copied into the index for nothing.
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS passage_note (
+        hash TEXT PRIMARY KEY,
+        passage TEXT NOT NULL,
+        -- The shelf it was read on, for grouping. Nullable: a passage can be
+        -- explained with no book behind it, and the row must outlive a folder
+        -- deleted on another device.
+        folder_id TEXT,
+        plain TEXT NOT NULL,
+        -- The {phrase, gloss} list as JSON. It is read and written whole and
+        -- never queried into, so a second table would buy nothing.
+        notes TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS passage_note_created_at_idx ON passage_note (created_at DESC);
+    `);
+    version = 5;
   }
 
   await db.execAsync(`PRAGMA user_version = ${version}`);

@@ -325,3 +325,115 @@ export async function suggestTopicWords(book: {
 
   return topics.length > 0 ? topics : null;
 }
+
+/** At most this many phrases are picked out of a passage. */
+const NOTE_COUNT = 4;
+
+const EXPLAIN_PROMPT = [
+  "You help a reader who understands every word of a passage but not what it is saying. The obstacle is",
+  "almost never vocabulary — it is metaphor, allusion, irony, understatement, or a phrase borrowed from",
+  "one register and dropped into another.",
+  "",
+  "plain: what the passage actually says, in one or two plain sentences. Strip the figures of speech and",
+  "state the point directly, as you would to someone who asked what the author was getting at. Never",
+  'open with a formula ("This passage means...", "The author is saying...") — just say it.',
+  "",
+  `notes: up to ${NOTE_COUNT} phrases from the passage that carry the difficulty, each with an`,
+  "explanation of at most 30 words. Quote each phrase exactly as it appears, and pick the SHORT phrase",
+  "that does the work, not the whole clause around it.",
+  "",
+  "Be thorough here — this is the part the reader came for, and a passage worth asking about usually has",
+  "two or three of these, not one. Work through the passage looking for each of:",
+  "  - an allusion: name what it refers to and what the reference brings with it;",
+  "  - a metaphor or comparison: say what maps onto what;",
+  "  - irony, overstatement or a joke: say where the humour sits, because a deadpan line read straight",
+  "    means the opposite of what it says;",
+  "  - a word from one world used about another (a modern, commercial or journalistic idiom applied to",
+  "    something ancient or grave, or the reverse): say what the mismatch is doing.",
+  "Skip only what a reader would take at first glance. Do not pad, but do not stop at the first one.",
+  "",
+  "Explain only what is on the page in front of you. Never say what the passage foreshadows, never draw",
+  "on what happens later in the book, and never mention a character, event or ending the passage does",
+  "not itself name: the reader is in the middle of the book and is trusting you not to get ahead of them.",
+  "Identifying an allusion to something outside the book — scripture, myth, history, another author —",
+  "is exactly the job and is not a spoiler.",
+  "",
+  "If the passage is genuinely plain — it states its meaning outright, with no figure of speech, allusion",
+  "or irony anywhere in it — return an empty string for plain and an empty notes list. Do not echo the",
+  "passage back as its own paraphrase, and do not invent difficulty that is not there.",
+].join("\n");
+
+/** Case, punctuation and spacing dropped, for comparing prose to prose. */
+function flatten(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+const explanationSchema = z.object({
+  plain: z.string(),
+  notes: z.array(z.object({ phrase: z.string(), gloss: z.string() })),
+});
+
+/** A passage explained: the paraphrase, plus the phrases that made it hard. */
+export type PassageExplanation = {
+  plain: string;
+  notes: { phrase: string; gloss: string }[];
+};
+
+/**
+ * Explains a passage a reader is stuck on — the other half of "I'm stuck",
+ * beside the word lookup above.
+ *
+ * This one breaks the pattern the rest of this file holds to, and the break is
+ * deliberate. Everything else is keyed by TERM on a shared row, so one unique
+ * word costs one call across every reader, forever. A passage has no term to
+ * key on, and the text belongs to the book rather than to the app — so the
+ * answer is NOT cached server-side and NOT shared between readers. The caller
+ * keeps it on the reader's own device (apps/native/lib/passage.ts). That makes
+ * this the one call here whose cost scales with use rather than with the
+ * vocabulary, which is why the caller rate-limits it and why the passage is
+ * capped above.
+ *
+ * `book` is title and author only, never the description: it is here so the
+ * model can place an allusion's register, and the plot is exactly what must
+ * not reach it. Returns null for every failure, like everything else here.
+ */
+export async function explainPassage(
+  passage: string,
+  book: { title: string; authors: string[] } | null,
+): Promise<PassageExplanation | null> {
+  const prompt = [
+    book ? `The reader is reading: ${book.title}` : null,
+    book?.authors.length ? `By: ${book.authors.join(", ")}` : null,
+    "",
+    "Passage:",
+    passage,
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
+
+  const object = await generate(passage.slice(0, 40), explanationSchema, EXPLAIN_PROMPT, prompt);
+  if (!object) return null;
+
+  // Nothing to say is a real answer — the caller renders it as "this reads
+  // plainly" rather than as a failure, which a null would become.
+  const notes = object.notes
+    .map((note) => ({ phrase: note.phrase.trim(), gloss: note.gloss.trim() }))
+    .filter((note) => note.phrase && note.gloss)
+    .slice(0, NOTE_COUNT);
+
+  // Asking for an empty `plain` on a passage that needs no explaining does not
+  // work: measured on Gemini 2.5 Flash-Lite, "The cat sat on the mat and went
+  // to sleep." comes back with the same sentence as its own paraphrase however
+  // the instruction is worded, because the field's main instruction pulls the
+  // other way. So the gate is here, not in the prompt — the same reason the
+  // entry schema carries no `known: boolean` and Datamuse rather than the
+  // model decides whether a word is real. An echo with nothing picked out of
+  // it is the model saying there was nothing to pick.
+  const plain = object.plain.trim();
+  const isEcho = notes.length === 0 && flatten(plain) === flatten(passage);
+
+  return { plain: isEcho ? "" : plain, notes };
+}
