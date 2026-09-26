@@ -1,0 +1,17 @@
+{
+  "name": "dictionary-host",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build:pack": "mkdir -p pack && bun run ../native/scripts/wordnet-to-dictionary.ts pack && bun run ../native/scripts/build-dictionary-db.ts extended pack/dictionary-extended.json pack/dictionary-extended.db",
+    "check-types": "tsc --noEmit",
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "devDependencies": {
+    "@better-vocab/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "^6.0.3"
+  }
+}

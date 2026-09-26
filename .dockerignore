@@ -1,0 +1,20 @@
+# The only image built from this repo is apps/dictionary-host, whose build
+# context is the repo root (its pipeline lives in apps/native/scripts). Keeping
+# this list tight is what stops the whole Expo dependency tree and the bundled
+# core dictionary from being uploaded to the builder for a 26 MB file.
+**/node_modules
+.git
+.turbo
+**/.turbo
+**/dist
+**/.next
+**/.expo
+**/pack
+
+# Never let a local .env reach a build context.
+.env
+**/.env
+**/.env.*
+
+# 9.2 MB, ships inside the app binary, and no part of this image needs it.
+apps/native/assets/dictionary/core.db

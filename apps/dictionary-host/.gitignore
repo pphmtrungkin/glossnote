@@ -1,0 +1,2 @@
+# Built by `bun run build:pack` for local runs; the deploy builds its own.
+pack/
