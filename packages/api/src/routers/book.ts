@@ -278,7 +278,9 @@ export async function upsertBook(input: BookInput): Promise<string> {
     })
     .returning({ id: book.id });
 
-  return row.id;
+  // DO UPDATE always returns its row, unlike DO NOTHING, which returns none
+  // when it conflicts.
+  return row!.id;
 }
 
 /**
